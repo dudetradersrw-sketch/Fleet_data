@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FleetDesk - Combinations</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen overflow-hidden">
+  <div id="sidebarContainer"></div>
+  <main class="flex-1 flex flex-col h-screen overflow-y-auto">
+    <header class="bg-white border-b px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+      <h1 class="text-xl font-bold text-gray-800">Combinations (Truck + Trailer + Driver)</h1>
+      <button onclick="fetchDatabase()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm transition">🔄 Sync Data</button>
+    </header>
+    <div class="p-6 space-y-6" id="pageContent">Loading...</div>
+  </main>
+  <script>
+    document.getElementById("sidebarContainer").innerHTML = renderSidebar("Combinations");
+
+    window.onDataLoaded = function(db) {
+      const combs = db.Combinations || [];
+      const trucks = db.Trucks || [];
+      const trailers = db.Trailers || [];
+      const drivers = db.Drivers || [];
+
+      const columns = ["ID", "Combined Vehicle", "Driver", "Driver History", "Actions"];
+
+      document.getElementById("pageContent").innerHTML = `
+        <div class="mb-2">
+          <button onclick="openCombFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
+            ➕ Add New Combination
+          </button>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div class="p-4 border-b flex flex-col md:flex-row justify-between items-center gap-3">
+            <input type="text" placeholder="🔍 Search combinations..." oninput="filterTable(event, 'table_Combinations')" class="border px-3 py-1.5 rounded text-sm w-full md:w-72 outline-none">
+            <div class="flex items-center gap-2">
+              ${renderColumnVisibilityMenu('table_Combinations', columns)}
+              <button onclick="exportPDFTable('Combinations', globalData.Combinations)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm">📥 PDF</button>
+              <button onclick="exportCSVData('Combinations', globalData.Combinations)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm">📥 CSV</button>
+            </div>
+          </div>
+          <table class="w-full text-left border-collapse text-sm" id="table_Combinations">
+            <thead>
+              <tr class="bg-gray-50 text-gray-500">
+                <th class="p-3">ID</th>
+                <th class="p-3">Combined Vehicle</th>
+                <th class="p-3">Driver</th>
+                <th class="p-3">Driver History</th>
+                <th class="p-3 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              ${combs.map(cb => {
+                const truck = trucks.find(t => String(t.ID) === String(cb.TruckID) || String(t.PlateNumber) === String(cb.TruckID));
+                const trailer = trailers.find(tr => String(tr.ID) === String(cb.TrailerID) || String(tr.PlateNumber) === String(cb.TrailerID));
+                const driver = drivers.find(d => String(d.ID) === String(cb.DriverID) || String(d.FullName) === String(cb.DriverID));
+
+                const truckPlate = truck ? (truck.PlateNumber || truck.Registration || truck.Plate || truck.ID) : (cb.TruckID || 'No Truck');
+                const trailerPlate = trailer ? (trailer.PlateNumber || trailer.Registration || trailer.Plate || trailer.ID) : 'No Trailer';
+                
+                // Formatted as 'RAG797T/RL5563'
+                const combinedVehicle = `${truckPlate}/${trailerPlate}`;
+                const driverDisplay = driver ? (driver.FullName || driver.Name || driver.ID) : (cb.DriverID || 'N/A');
+
+                return `
+                  <tr>
+                    <td class="p-3 text-gray-500 text-xs">${cb.ID || ''}</td>
+                    <td class="p-3 font-semibold text-gray-800">🚛 ${combinedVehicle}</td>
+                    <td class="p-3 font-medium text-blue-600">👤 ${driverDisplay}</td>
+                    <td class="p-3 text-xs text-gray-500">${cb.DriverHistory || 'None'}</td>
+                    <td class="p-3 text-center">${renderActionCell('Combinations', cb.ID)}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    };
+
+    function openCombFormModal(item = null) {
+      const trucks = globalData.Trucks || [];
+      const trailers = globalData.Trailers || [];
+      const drivers = globalData.Drivers || [];
+
+      const truckOptions = trucks.map(t => `<option value="${t.ID}" ${item && (String(item.TruckID) === String(t.ID) || String(item.TruckID) === String(t.PlateNumber)) ? 'selected' : ''}>${t.PlateNumber || t.Registration || t.ID} (${t.Make || ''})</option>`).join('');
+      const trailerOptions = trailers.map(tr => `<option value="${tr.ID}" ${item && (String(item.TrailerID) === String(tr.ID) || String(item.TrailerID) === String(tr.PlateNumber)) ? 'selected' : ''}>${tr.PlateNumber || tr.Registration || tr.ID}</option>`).join('');
+      const driverOptions = drivers.map(d => `<option value="${d.ID}" ${item && (String(item.DriverID) === String(d.ID) || String(item.DriverID) === String(d.FullName)) ? 'selected' : ''}>${d.FullName || d.Name || d.ID} (${d.License || ''})</option>`).join('');
+
+      const html = `
+        <form onsubmit="submitCombForm(event)" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <input type="hidden" id="cb_edit_id" value="${item ? item.ID : ''}">
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Truck</label>
+            <select id="cb_truck" required class="border p-2 rounded w-full text-sm outline-none bg-white"><option value="">Select Truck</option>${truckOptions}</select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Trailer</label>
+            <select id="cb_trailer" class="border p-2 rounded w-full text-sm outline-none bg-white"><option value="">Select Trailer (Optional)</option>${trailerOptions}</select>
+          </div>
+          <div class="md:col-span-2">
+            <label class="text-xs text-gray-500 block mb-1">Primary Driver</label>
+            <select id="cb_driver" required class="border p-2 rounded w-full text-sm outline-none bg-white"><option value="">Select Driver</option>${driverOptions}</select>
+          </div>
+          <button type="submit" class="md:col-span-2 bg-blue-600 text-white py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition">${item ? 'Update Combination' : 'Save Combination'}</button>
+        </form>
+      `;
+      openFormModal(item ? `Edit Combination: ${item.ID}` : "Create New Combination", html);
+    }
+
+    window.onEditTriggered = function(sheetName, item) {
+      if (sheetName === 'Combinations') openCombFormModal(item);
+    };
+
+    async function submitCombForm(e) {
+      e.preventDefault();
+      const editId = document.getElementById("cb_edit_id").value;
+      const data = {
+        ID: editId || ("COM-" + Date.now().toString().slice(-4)),
+        TruckID: document.getElementById("cb_truck").value,
+        TrailerID: document.getElementById("cb_trailer").value,
+        DriverID: document.getElementById("cb_driver").value
+      };
+      await sendToServer("Combinations", editId ? "update" : "add", data);
+    }
+
+    fetchDatabase();
+  </script>
+</body>
+</html>

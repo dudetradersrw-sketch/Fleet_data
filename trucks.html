@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FleetDesk - Trucks Management</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen overflow-hidden">
+  <div id="sidebarContainer"></div>
+  <main class="flex-1 flex flex-col h-screen overflow-y-auto">
+    <header class="bg-white border-b px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+      <h1 class="text-xl font-bold text-gray-800">Trucks Management</h1>
+      <button onclick="fetchDatabase()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm transition">🔄 Sync Data</button>
+    </header>
+    <div class="p-6 space-y-6" id="pageContent">Loading...</div>
+  </main>
+  <script>
+    document.getElementById("sidebarContainer").innerHTML = renderSidebar("Trucks");
+
+    window.onDataLoaded = function(db) {
+      const trucks = db.Trucks || [];
+      const columns = ["ID", "Plate Number", "Owner", "Car Category", "Truck Type", "Chassis Number", "Actions"];
+
+      document.getElementById("pageContent").innerHTML = `
+        <div class="mb-2">
+          <button onclick="openTruckFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
+            ➕ Add New Truck
+          </button>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div class="p-4 border-b flex flex-col md:flex-row justify-between items-center gap-3">
+            <input type="text" placeholder="🔍 Search trucks..." oninput="filterTable(event, 'table_Trucks')" class="border px-3 py-1.5 rounded text-sm w-full md:w-72 outline-none">
+            <div class="flex items-center gap-2">
+              ${renderColumnVisibilityMenu('table_Trucks', columns)}
+              <button onclick="exportPDFTable('Trucks', globalData.Trucks)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm">📥 PDF</button>
+              <button onclick="exportCSVData('Trucks', globalData.Trucks)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm">📥 CSV</button>
+            </div>
+          </div>
+          <table class="w-full text-left border-collapse text-sm" id="table_Trucks">
+            <thead>
+              <tr class="bg-gray-50 text-gray-500">
+                <th class="p-3">ID</th><th class="p-3">Plate Number</th><th class="p-3">Owner</th><th class="p-3">Car Category</th><th class="p-3">Truck Type</th><th class="p-3">Chassis Number</th><th class="p-3 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              ${trucks.map(t => `
+                <tr>
+                  <td class="p-3">${t.ID || ''}</td>
+                  <td class="p-3 font-semibold">${t.PlateNumber || ''}</td>
+                  <td class="p-3">${t.Owner || ''}</td>
+                  <td class="p-3">${t.CarCategory || ''}</td>
+                  <td class="p-3">${t.TruckType || ''}</td>
+                  <td class="p-3">${t.ChassisNumber || ''}</td>
+                  <td class="p-3 text-center">${renderActionCell('Trucks', t.ID)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    };
+
+    function openTruckFormModal(item = null) {
+      const contactsOptions = (globalData.Contacts || []).map(c => `<option value="${c.Name}" ${item && item.Owner === c.Name ? 'selected' : ''}>${c.Name}</option>`).join('');
+      const html = `
+        <form onsubmit="submitTruckForm(event)" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <input type="hidden" id="t_edit_id" value="${item ? item.ID : ''}">
+          <div><label class="text-xs text-gray-500 block">Plate Number</label><input type="text" id="t_plate" value="${item ? item.PlateNumber || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <div><label class="text-xs text-gray-500 block">Owner</label><select id="t_owner" required class="border p-2 rounded w-full"><option value="">Select Owner</option>${contactsOptions}</select></div>
+          <div>
+            <label class="text-xs text-gray-500 block">Car Category</label>
+            <select id="t_cat" required class="border p-2 rounded w-full">
+              <option value="Single Diff" ${item && item.CarCategory === 'Single Diff' ? 'selected' : ''}>Single Diff</option>
+              <option value="Double Diff" ${item && item.CarCategory === 'Double Diff' ? 'selected' : ''}>Double Diff</option>
+            </select>
+          </div>
+          <div><label class="text-xs text-gray-500 block">Truck Make / Type</label><input type="text" id="t_type" value="${item ? item.TruckType || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <div class="md:col-span-2"><label class="text-xs text-gray-500 block">Chassis Number</label><input type="text" id="t_chassis" value="${item ? item.ChassisNumber || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <button type="submit" class="md:col-span-2 bg-blue-600 text-white py-2.5 rounded font-semibold hover:bg-blue-700 transition">${item ? 'Update Truck' : 'Save Truck'}</button>
+        </form>
+      `;
+      openFormModal(item ? `Edit Truck: ${item.ID}` : "Register New Truck", html);
+    }
+
+    window.onEditTriggered = function(sheetName, item) {
+      if (sheetName === 'Trucks') openTruckFormModal(item);
+    };
+
+    async function submitTruckForm(e) {
+      e.preventDefault();
+      const editId = document.getElementById("t_edit_id").value;
+      const data = {
+        ID: editId || undefined,
+        PlateNumber: document.getElementById("t_plate").value,
+        Owner: document.getElementById("t_owner").value,
+        CarCategory: document.getElementById("t_cat").value,
+        TruckType: document.getElementById("t_type").value,
+        ChassisNumber: document.getElementById("t_chassis").value
+      };
+      await sendToServer("Trucks", editId ? "update" : "add", data);
+    }
+
+    fetchDatabase();
+  </script>
+</body>
+</html>

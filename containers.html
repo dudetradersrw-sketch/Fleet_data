@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FleetDesk - Containers Operations</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen overflow-hidden">
+  <div id="sidebarContainer"></div>
+
+  <main class="flex-1 flex flex-col h-screen overflow-y-auto">
+    <header class="bg-white border-b px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+      <h1 class="text-xl font-bold text-gray-800">Containers Operations & P&L</h1>
+      <button onclick="fetchDatabase(true)" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm transition">🔄 Sync Data</button>
+    </header>
+
+    <div class="p-6 space-y-6" id="pageContent">Loading...</div>
+  </main>
+
+  <!-- Document Viewer Modal -->
+  <div id="docViewerModal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-4xl h-[85vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+      <div class="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+        <h3 id="docViewerTitle" class="font-bold text-gray-800 text-lg truncate">Document Viewer</h3>
+        <button onclick="closeDocViewer()" class="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-200 rounded-lg font-bold text-sm transition">✕ Close</button>
+      </div>
+      <div class="flex-1 bg-gray-100 p-2 flex items-center justify-center overflow-hidden">
+        <iframe id="docViewerFrame" class="w-full h-full bg-white rounded-lg border shadow-inner" frameborder="0"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById("sidebarContainer").innerHTML = renderSidebar("Containers");
+
+    // Default Column Master List & Mapping Keys
+    const defaultColumnOrder = [
+      { key: "ID", label: "ID" },
+      { key: "ContainerNo", label: "Container No" },
+      { key: "BLNo", label: "BL No" },
+      { key: "Client", label: "Client" },
+      { key: "CombinationID", label: "Vehicle Combination" },
+      { key: "TripID", label: "Associated Trip" },
+      { key: "AgreedAmount", label: "Agreed Amount (USD)" },
+      { key: "LoadingDate", label: "Loading Date" },
+      { key: "DestinationDate", label: "Destination Date" },
+      { key: "OffloadedDate", label: "Offloaded Date" },
+      { key: "ReturningDate", label: "Returning Date" },
+      { key: "ReturnedDepotDate", label: "Returned Depot Date" },
+      { key: "Status", label: "Status" },
+      { key: "Comment", label: "Comment" },
+      { key: "Attachments", label: "Attachments" },
+      { key: "Actions", label: "Actions" }
+    ];
+
+    function getContainerColumns() {
+      const saved = localStorage.getItem("fleetdesk_container_col_order");
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch(e) {}
+      }
+      return defaultColumnOrder;
+    }
+
+    window.onDataLoaded = function(db) {
+      renderContainersPage();
+    };
+
+    function renderContainersPage() {
+      const db = globalData || {};
+      const containers = db.Containers || [];
+      const combinations = db.Combinations || [];
+      const trucks = db.Trucks || [];
+      const trailers = db.Trailers || [];
+      const trips = db.Trips || [];
+
+      const currentColumns = getContainerColumns();
+
+      let tableRows = "";
+      containers.forEach(c => {
+        const combination = combinations.find(co => String(co.ID) === String(c.CombinationID));
+        let displayVehicle = c.CombinationID || 'N/A';
+        let combinationIdRef = combination ? combination.ID : '';
+
+        if (combination) {
+          const t = trucks.find(tr => String(tr.ID) === String(combination.TruckID) || String(tr.PlateNumber) === String(combination.TruckID));
+          const tr = trailers.find(trl => String(trl.ID) === String(combination.TrailerID) || String(trl.PlateNumber) === String(combination.TrailerID));
+          const tPlate = t ? (t.PlateNumber || t.Registration || t.ID) : combination.TruckID;
+          const trPlate = tr ? (tr.PlateNumber || tr.Registration || tr.ID) : 'No Trailer';
+          displayVehicle = `${tPlate}/${trPlate}`;
+        }
+
+        const trip = trips.find(tr => String(tr.ID) === String(c.TripID) || String(tr.ID) === String(c.AssociatedTrip));
+        const displayTrip = trip ? `Trip [${trip.TripNumber}]` : 'None';
+        const tripIdRef = trip ? trip.ID : '';
+
+        const attachments = parseAttachments(c.Attachments || c.ContainerAttachments);
+
+        const isLocked = c.IsLocked === "true" || c.IsLocked === true;
+        const statusBg = isLocked ? "bg-purple-100 text-purple-800 border border-purple-300" : "bg-blue-100 text-blue-800 hover:bg-blue-200 cursor-pointer";
+        const statusLabel = (c.Status || 'Loaded') + (isLocked ? " 🔒 (Locked)" : " ✏️");
+
+        // Build table cells dynamically according to user's saved column order
+        let cellsHtml = "";
+        currentColumns.forEach(col => {
+          switch(col.key) {
+            case "ID":
+              cellsHtml += `<td class="p-3 font-mono text-xs text-gray-500">${c.ID || ''}</td>`;
+              break;
+            case "ContainerNo":
+              cellsHtml += `<td class="p-3 font-semibold text-gray-800">${c.ContainerNo || c.ContainerNumber || ''}</td>`;
+              break;
+            case "BLNo":
+              cellsHtml += `<td class="p-3 text-xs">${c.BLNo || ''}</td>`;
+              break;
+            case "Client":
+              cellsHtml += `<td class="p-3">${c.Client || ''}</td>`;
+              break;
+            case "CombinationID":
+              cellsHtml += `<td class="p-3 font-semibold text-indigo-700 cursor-pointer hover:underline" onclick="previewCombinationDetails('${combinationIdRef}')">🚛 ${displayVehicle}</td>`;
+              break;
+            case "TripID":
+              cellsHtml += `<td class="p-3 font-medium text-blue-600 cursor-pointer hover:underline" onclick="previewTripDetailsModal('${tripIdRef}')">🚀 ${displayTrip}</td>`;
+              break;
+            case "AgreedAmount":
+              cellsHtml += `<td class="p-3 font-semibold text-slate-700">$${Number(c.AgreedAmount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>`;
+              break;
+            case "LoadingDate":
+              cellsHtml += `<td class="p-3 text-xs">${c.LoadingDate || ''}</td>`;
+              break;
+            case "DestinationDate":
+              cellsHtml += `<td class="p-3 text-xs">${c.DestinationDate || ''}</td>`;
+              break;
+            case "OffloadedDate":
+              cellsHtml += `<td class="p-3 text-xs">${c.OffloadedDate || ''}</td>`;
+              break;
+            case "ReturningDate":
+              cellsHtml += `<td class="p-3 text-xs">${c.ReturningDate || ''}</td>`;
+              break;
+            case "ReturnedDepotDate":
+              cellsHtml += `<td class="p-3 text-xs">${c.ReturnedDepotDate || ''}</td>`;
+              break;
+            case "Status":
+              cellsHtml += `<td class="p-3"><span onclick="${isLocked ? '' : `promptChangeStatus('${c.ID}', '${c.Status || 'Loaded'}')`}" class="${statusBg} px-2.5 py-1 rounded-full text-xs font-medium inline-block transition">${statusLabel}</span></td>`;
+              break;
+            case "Comment":
+              cellsHtml += `<td class="p-3 text-xs text-gray-500">${c.Comment || ''}</td>`;
+              break;
+            case "Attachments":
+              cellsHtml += `<td class="p-3 text-center"><button onclick="openFileUploadModal('${c.ID}', '${c.ContainerNo || c.ContainerNumber || c.ID}')" class="px-2.5 py-1 bg-emerald-100 text-emerald-700 rounded text-xs font-semibold hover:bg-emerald-200 transition">📎 (${attachments.length})</button></td>`;
+              break;
+            case "Actions":
+              cellsHtml += `<td class="p-3 text-center">${renderActionCell('Containers', c.ID)}</td>`;
+              break;
+            default:
+              cellsHtml += `<td class="p-3"></td>`;
+          }
+        });
+
+        tableRows += `<tr class="hover:bg-gray-50 border-b">${cellsHtml}</tr>`;
+      });
+
+      let headersHtml = "";
+      currentColumns.forEach(col => {
+        const align = col.key === 'Attachments' || col.key === 'Actions' ? 'text-center' : '';
+        headersHtml += `<th class="p-3 ${align}">${col.label}</th>`;
+      });
+
+      document.getElementById("pageContent").innerHTML = `
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-2">
+          <button onclick="openContainerFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
+            ➕ Register Container Operation
+          </button>
+          <button onclick="openColumnOrderModal()" class="bg-slate-800 hover:bg-slate-900 text-white font-semibold px-3 py-2 rounded-lg shadow text-xs transition flex items-center gap-1.5">
+            ⇄ Reorder Columns
+          </button>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div class="p-4 border-b flex flex-col md:flex-row justify-between items-center gap-3">
+            <input type="text" placeholder="🔍 Search containers..." oninput="filterTable(event, 'table_Containers')" class="border px-3 py-1.5 rounded text-sm w-full md:w-72 outline-none focus:ring-2 focus:ring-blue-500">
+            <div class="flex items-center gap-2">
+              <button onclick="exportPDFTable('Containers', globalData.Containers)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm hover:bg-indigo-700 transition font-semibold">📥 PDF</button>
+              <button onclick="exportCSVData('Containers', globalData.Containers)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700 transition font-semibold">📥 CSV</button>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto min-h-[300px]">
+            <table class="w-full text-left border-collapse text-sm whitespace-nowrap" id="table_Containers">
+              <thead>
+                <tr class="bg-gray-50 text-gray-500 text-xs">
+                  ${headersHtml}
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+                ${tableRows || `<tr><td colspan="${currentColumns.length}" class="p-4 text-center text-gray-400">No container records found.</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    // --- Column Reordering Manager ---
+    function openColumnOrderModal() {
+      const currentColumns = getContainerColumns();
+      let listHtml = "";
+
+      currentColumns.forEach((col, idx) => {
+        listHtml += `
+          <div class="flex items-center justify-between bg-gray-50 p-2.5 rounded-lg border text-xs">
+            <span class="font-semibold text-gray-700">📌 ${col.label}</span>
+            <div class="flex items-center gap-1">
+              <button type="button" onclick="moveColumnIndex(${idx}, -1)" ${idx === 0 ? 'disabled class="opacity-30 cursor-not-allowed px-2 py-1 bg-gray-200 rounded"' : 'class="px-2 py-1 bg-white border rounded hover:bg-gray-100 font-bold"'}>⬆️ Move Up</button>
+              <button type="button" onclick="moveColumnIndex(${idx}, 1)" ${idx === currentColumns.length - 1 ? 'disabled class="opacity-30 cursor-not-allowed px-2 py-1 bg-gray-200 rounded"' : 'class="px-2 py-1 bg-white border rounded hover:bg-gray-100 font-bold"'}>⬇️ Move Down</button>
+            </div>
+          </div>
+        `;
+      });
+
+      const modalHtml = `
+        <div class="space-y-4">
+          <p class="text-xs text-gray-500">Arrange the table column positions to your preferred order. Changes apply immediately upon saving.</p>
+          <div class="space-y-2 max-h-[350px] overflow-y-auto pr-1">
+            ${listHtml}
+          </div>
+          <div class="flex items-center gap-2 pt-2 border-t">
+            <button type="button" onclick="resetColumnOrderToDefault()" class="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg font-semibold text-xs hover:bg-gray-300 transition">Reset Default</button>
+            <button type="button" onclick="closeFormModal()" class="flex-1 bg-blue-600 text-white py-2 rounded-lg font-semibold text-xs hover:bg-blue-700 transition">Done</button>
+          </div>
+        </div>
+      `;
+      openFormModal("Manage Table Column Positions", modalHtml);
+    }
+
+    function moveColumnIndex(index, direction) {
+      const currentColumns = getContainerColumns();
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= currentColumns.length) return;
+
+      const temp = currentColumns[index];
+      currentColumns[index] = currentColumns[targetIndex];
+      currentColumns[targetIndex] = temp;
+
+      localStorage.setItem("fleetdesk_container_col_order", JSON.stringify(currentColumns));
+      openColumnOrderModal(); // Refresh modal list
+      renderContainersPage(); // Refresh table view
+    }
+
+    function resetColumnOrderToDefault() {
+      localStorage.removeItem("fleetdesk_container_col_order");
+      openColumnOrderModal();
+      renderContainersPage();
+      showNotification("Columns reset to default order.");
+    }
+
+    function previewCombinationDetails(combId) {
+      const db = globalData || {};
+      const combination = (db.Combinations || []).find(c => String(c.ID) === String(combId));
+      if (!combination) return alert("Vehicle combination details not found.");
+
+      const truck = (db.Trucks || []).find(t => String(t.ID) === String(combination.TruckID) || String(t.PlateNumber) === String(combination.TruckID));
+      const trailer = (db.Trailers || []).find(tr => String(tr.ID) === String(combination.TrailerID) || String(tr.PlateNumber) === String(combination.TrailerID));
+      const driver = (db.Drivers || []).find(d => String(d.ID) === String(combination.DriverID));
+
+      const html = `
+        <div class="space-y-3 text-sm text-gray-700">
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Combination ID:</span><span class="font-bold text-indigo-600">${combination.ID}</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Truck Plate:</span><span class="font-semibold text-gray-800">🚛 ${truck ? (truck.PlateNumber || truck.Registration || truck.ID) : combination.TruckID}</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Trailer Plate:</span><span class="font-semibold text-gray-800">🚃 ${trailer ? (trailer.PlateNumber || trailer.Registration || trailer.ID) : 'No Trailer'}</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Truck Owner:</span><span class="font-semibold text-gray-800">${truck ? (truck.Owner || truck.OwnerName || 'N/A') : 'N/A'}</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Assigned Driver:</span><span class="font-semibold text-blue-600">👤 ${driver ? (driver.FullName || driver.Name || driver.ID) : (combination.DriverID || 'N/A')}</span></div>
+        </div>
+      `;
+      document.getElementById("modalTitle").innerText = `Vehicle Combination Details [${combination.ID}]`;
+      document.getElementById("modalBody").innerHTML = html;
+      document.getElementById("previewModal").classList.remove("hidden");
+    }
+
+    function previewTripDetailsModal(tripId) {
+      const db = globalData || {};
+      const trip = (db.Trips || []).find(t => String(t.ID) === String(tripId));
+      if (!trip) return alert("No trip associated with this container.");
+
+      const garageList = db.Garage || [];
+      const tripExpenses = garageList.filter(g => String(g.TripID) === String(trip.ID) || String(g.TripID) === String(trip.TripNumber));
+      const totalSpend = tripExpenses.reduce((sum, g) => sum + (parseFloat(g.TotalUSD || g.PriceUSD) || 0), 0);
+
+      let rowsHtml = "";
+      tripExpenses.forEach(e => {
+        rowsHtml += `<tr><td class="p-2">${e.Date || ''}</td><td class="p-2">${e.Item || ''}</td><td class="p-2">${e.ShopRef || ''}</td><td class="p-2 font-bold text-red-600">$${e.TotalUSD || e.PriceUSD || 0}</td></tr>`;
+      });
+
+      const expensesHtml = tripExpenses.length > 0 ? `
+        <div class="mt-4">
+          <h4 class="font-bold text-gray-700 text-sm mb-2">Spendings on Trip (${tripExpenses.length})</h4>
+          <table class="w-full text-xs border">
+            <thead><tr class="bg-gray-100"><th class="p-2">Date</th><th class="p-2">Item</th><th class="p-2">Shop Ref</th><th class="p-2">Amount (USD)</th></tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+      ` : `<p class="text-xs text-gray-400 mt-3 italic">No garage expenses recorded for this trip.</p>`;
+
+      const html = `
+        <div class="space-y-3 text-sm text-gray-700">
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Trip Number:</span><span class="font-bold text-blue-600">${trip.TripNumber}</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Start Date:</span><span class="font-semibold text-gray-800">${trip.StartDate || 'N/A'}</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Total Trip Spend:</span><span class="font-bold text-red-600">$${totalSpend.toFixed(2)}</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Status:</span><span class="font-semibold text-emerald-600">${trip.Status || 'Active'}</span></div>
+          ${expensesHtml}
+        </div>
+      `;
+      document.getElementById("modalTitle").innerText = `Trip Financial Summary: ${trip.TripNumber}`;
+      document.getElementById("modalBody").innerHTML = html;
+      document.getElementById("previewModal").classList.remove("hidden");
+    }
+
+    async function promptChangeStatus(containerId, currentStatus) {
+      const newStatus = prompt("Enter new status (Loaded, In Transit, Destination, Returning, Done, Down Destination):", currentStatus);
+      if (!newStatus) return;
+
+      const container = (globalData.Containers || []).find(c => String(c.ID) === String(containerId));
+      if (!container) return;
+
+      container.Status = newStatus;
+      await sendToServer("Containers", "update", container);
+    }
+
+    function openContainerFormModal(item = null) {
+      const combinations = globalData.Combinations || [];
+      const trucks = globalData.Trucks || [];
+      const trailers = globalData.Trailers || [];
+      const trips = globalData.Trips || [];
+
+      let tripOptions = '<option value="">Select Trip (Optional)</option>';
+      trips.forEach(tr => {
+        const selected = item && (String(item.TripID) === String(tr.ID) || String(item.AssociatedTrip) === String(tr.ID)) ? 'selected' : '';
+        tripOptions += `<option value="${tr.ID}" ${selected}>Trip [${tr.TripNumber}]</option>`;
+      });
+
+      let clientOptions = '<option value="">Select Client</option>';
+      (globalData.Contacts || []).forEach(c => {
+        const selected = item && item.Client === c.Name ? 'selected' : '';
+        clientOptions += `<option value="${c.Name}" ${selected}>${c.Name}</option>`;
+      });
+
+      let combOptions = '<option value="">Select Vehicle Combination</option>';
+      combinations.forEach(co => {
+        const t = trucks.find(tr => String(tr.ID) === String(co.TruckID) || String(tr.PlateNumber) === String(co.TruckID));
+        const tr = trailers.find(trl => String(trl.ID) === String(co.TrailerID) || String(trl.PlateNumber) === String(co.TrailerID));
+        const tPlate = t ? (t.PlateNumber || t.Registration || t.ID) : co.TruckID;
+        const trPlate = tr ? (tr.PlateNumber || tr.Registration || tr.ID) : 'No Trailer';
+        const comboLabel = `${tPlate}/${trPlate}`;
+
+        const selected = item && String(item.CombinationID) === String(co.ID) ? 'selected' : '';
+        combOptions += `<option value="${co.ID}" ${selected}>${comboLabel}</option>`;
+      });
+
+      const statuses = ["Loaded", "In Transit", "Destination", "Returning", "Done", "Down Destination"];
+      let statusOptions = '';
+      statuses.forEach(s => {
+        const selected = item && item.Status === s ? 'selected' : '';
+        statusOptions += `<option value="${s}" ${selected}>${s}</option>`;
+      });
+
+      const isLockedChecked = item && (item.IsLocked === "true" || item.IsLocked === true) ? 'checked' : '';
+
+      const html = `
+        <form onsubmit="submitContainerForm(event)" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <input type="hidden" id="c_edit_id" value="${item ? item.ID : ''}">
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Container No</label>
+            <input type="text" id="c_no" value="${item ? (item.ContainerNo || item.ContainerNumber || '') : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">BL No</label>
+            <input type="text" id="c_bl" value="${item ? item.BLNo || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Client</label>
+            <select id="c_client" required class="border p-2 rounded w-full text-sm outline-none bg-white">${clientOptions}</select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Vehicle Combination</label>
+            <select id="c_comb" required class="border p-2 rounded w-full text-sm outline-none bg-white">${combOptions}</select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Associated Trip</label>
+            <select id="c_trip" class="border p-2 rounded w-full text-sm outline-none bg-white">${tripOptions}</select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Status</label>
+            <select id="c_status" required class="border p-2 rounded w-full text-sm outline-none bg-white">${statusOptions}</select>
+          </div>
+          <div class="md:col-span-2 bg-purple-50 p-3 rounded-lg border border-purple-200 flex items-center gap-3">
+            <input type="checkbox" id="c_lock" ${isLockedChecked} class="w-4 h-4 text-purple-600 rounded">
+            <div>
+              <label for="c_lock" class="text-xs font-bold text-purple-900 cursor-pointer">Lock / Permanently Confirm Status</label>
+              <p class="text-[11px] text-purple-700">Once checked and saved, the status will be permanently locked and cannot be changed.</p>
+            </div>
+          </div>
+          <div class="md:col-span-2">
+            <label class="text-xs text-gray-500 block mb-1">Agreed Amount (USD)</label>
+            <input type="number" step="0.01" id="c_amt" value="${item ? item.AgreedAmount || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Loading Date</label>
+            <input type="date" id="c_load" value="${item ? item.LoadingDate || '' : ''}" class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Destination Date</label>
+            <input type="date" id="c_dest" value="${item ? item.DestinationDate || '' : ''}" class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Offloaded Date</label>
+            <input type="date" id="c_off" value="${item ? item.OffloadedDate || '' : ''}" class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Returning Date</label>
+            <input type="date" id="c_ret" value="${item ? item.ReturningDate || '' : ''}" class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Returned Depot Date</label>
+            <input type="date" id="c_depot" value="${item ? item.ReturnedDepotDate || '' : ''}" class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div class="md:col-span-2">
+            <label class="text-xs text-gray-500 block mb-1">Comment / Remarks</label>
+            <input type="text" id="c_comm" value="${item ? item.Comment || '' : ''}" class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <button type="submit" id="container_submit_btn" class="md:col-span-2 bg-blue-600 text-white py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition">
+            ${item ? 'Update Container Job' : 'Save Container Job'}
+          </button>
+        </form>
+      `;
+      openFormModal(item ? `Edit Container Job: ${item.ID}` : "Register Container Operation", html);
+    }
+
+    window.onEditTriggered = function(sheetName, item) {
+      if (sheetName === 'Containers') openContainerFormModal(item);
+    };
+
+    async function submitContainerForm(e) {
+      e.preventDefault();
+      const submitBtn = document.getElementById("container_submit_btn");
+      if (submitBtn) submitBtn.disabled = true;
+
+      try {
+        const editId = document.getElementById("c_edit_id").value;
+        const selectedTrip = document.getElementById("c_trip").value;
+
+        const data = {
+          ID: editId || ("CON-" + Date.now().toString().slice(-4)),
+          ContainerNo: document.getElementById("c_no").value,
+          ContainerNumber: document.getElementById("c_no").value,
+          BLNo: document.getElementById("c_bl").value,
+          Client: document.getElementById("c_client").value,
+          CombinationID: document.getElementById("c_comb").value,
+          TripID: selectedTrip,
+          AssociatedTrip: selectedTrip,
+          Status: document.getElementById("c_status").value,
+          IsLocked: document.getElementById("c_lock").checked,
+          AgreedAmount: document.getElementById("c_amt").value,
+          LoadingDate: document.getElementById("c_load").value,
+          DestinationDate: document.getElementById("c_dest").value,
+          OffloadedDate: document.getElementById("c_off").value,
+          ReturningDate: document.getElementById("c_ret").value,
+          ReturnedDepotDate: document.getElementById("c_depot").value,
+          Comment: document.getElementById("c_comm").value
+        };
+
+        const action = editId ? "update" : "add";
+        await sendToServer("Containers", action, data);
+
+        if (typeof closeFormModal === 'function') closeFormModal();
+        if (typeof fetchDatabase === 'function') fetchDatabase(true);
+      } catch (err) {
+        console.error("Container submission error:", err);
+        alert("An error occurred while saving the container. Please try again.");
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    }
+
+    // --- Attachment & In-App Viewing Functions ---
+    function parseAttachments(fieldVal) {
+      if (!fieldVal) return [];
+      if (typeof fieldVal === 'string') {
+        try {
+          const parsed = JSON.parse(fieldVal);
+          if (Array.isArray(parsed)) return parsed;
+        } catch (e) {
+          return [{ name: fieldVal.split('/').pop().split('?')[0] || 'Document', url: fieldVal }];
+        }
+      }
+      if (Array.isArray(fieldVal)) return fieldVal;
+      return [];
+    }
+
+    function openFileUploadModal(containerId, containerNo) {
+      const db = globalData || {};
+      const targetItem = (db.Containers || []).find(i => String(i.ID) === String(containerId));
+      if (!targetItem) return;
+
+      const attachments = parseAttachments(targetItem.Attachments || targetItem.ContainerAttachments);
+
+      let listHtml = "";
+      if (attachments.length === 0) {
+        listHtml = `<p class="text-xs text-gray-400 italic py-2 text-center">No files attached yet.</p>`;
+      } else {
+        attachments.forEach((att, idx) => {
+          listHtml += `
+            <div class="flex items-center justify-between bg-gray-50 p-2 rounded border text-xs">
+              <span class="truncate font-medium text-gray-700 max-w-[200px]" title="${att.name}">📄 ${att.name}</span>
+              <div class="flex items-center gap-1.5">
+                <button type="button" onclick="viewAttachedFileInApp('${att.url}', '${att.name}')" class="px-2 py-1 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 font-semibold">👁️ View</button>
+                <button type="button" onclick="removeAttachmentFromModal('${containerId}', ${idx})" class="px-2 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 font-semibold">✕ Remove</button>
+              </div>
+            </div>
+          `;
+        });
+      }
+
+      const modalTitle = `Manage Attachments: Container ${containerNo}`;
+      const html = `
+        <div class="space-y-4">
+          <div>
+            <label class="text-xs font-bold text-gray-600 block mb-2">Attached Files List:</label>
+            <div class="space-y-2 max-h-48 overflow-y-auto pr-1 border rounded-lg p-2 bg-white">
+              ${listHtml}
+            </div>
+          </div>
+          <hr class="my-2">
+          <form onsubmit="handleContainerFileUpload(event, '${containerId}')" class="space-y-3">
+            <div>
+              <label class="text-xs font-bold text-gray-600 block mb-1">Upload New Files (PDF, PNG, JPG)</label>
+              <input type="file" id="multiple_file_input" accept=".pdf,image/*" multiple required class="border p-2 rounded w-full text-sm bg-white outline-none">
+            </div>
+            <button type="submit" id="upload_submit_btn" class="w-full bg-emerald-600 text-white py-2.5 rounded-lg font-semibold hover:bg-emerald-700 transition">
+              Upload & Attach Files
+            </button>
+          </form>
+        </div>
+      `;
+      openFormModal(modalTitle, html);
+    }
+
+    async function handleContainerFileUpload(e, containerId) {
+      e.preventDefault();
+      const fileInput = document.getElementById("multiple_file_input");
+      const submitBtn = document.getElementById("upload_submit_btn");
+
+      if (!fileInput.files || fileInput.files.length === 0) return;
+
+      submitBtn.disabled = true;
+      submitBtn.innerText = "Processing Files...";
+
+      const db = globalData || {};
+      const targetItem = (db.Containers || []).find(i => String(i.ID) === String(containerId));
+      if (!targetItem) return;
+
+      const existingAttachments = parseAttachments(targetItem.Attachments || targetItem.ContainerAttachments);
+      const newAttachments = [...existingAttachments];
+
+      for (let i = 0; i < fileInput.files.length; i++) {
+        const file = fileInput.files[i];
+        const base64Url = await convertFileToBase64(file);
+        newAttachments.push({
+          name: file.name,
+          url: base64Url,
+          size: file.size,
+          type: file.type
+        });
+      }
+
+      targetItem.Attachments = JSON.stringify(newAttachments);
+      targetItem.ContainerAttachments = JSON.stringify(newAttachments);
+
+      await sendToServer("Containers", "update", targetItem);
+      if (typeof closeFormModal === 'function') closeFormModal();
+      if (typeof fetchDatabase === 'function') fetchDatabase(true);
+    }
+
+    async function removeAttachmentFromModal(containerId, index) {
+      const db = globalData || {};
+      const targetItem = (db.Containers || []).find(i => String(i.ID) === String(containerId));
+      if (!targetItem) return;
+
+      const attachments = parseAttachments(targetItem.Attachments || targetItem.ContainerAttachments);
+      attachments.splice(index, 1);
+
+      targetItem.Attachments = JSON.stringify(attachments);
+      targetItem.ContainerAttachments = JSON.stringify(attachments);
+
+      await sendToServer("Containers", "update", targetItem);
+      openFileUploadModal(containerId, targetItem.ContainerNo || targetItem.ContainerNumber || targetItem.ID);
+    }
+
+    function convertFileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = error => reject(error);
+      });
+    }
+
+    function viewAttachedFileInApp(url, fileName) {
+      if (!url) {
+        alert("No document URL attached.");
+        return;
+      }
+      document.getElementById("docViewerTitle").innerText = fileName || "Document Viewer";
+      document.getElementById("docViewerFrame").src = url;
+      document.getElementById("docViewerModal").classList.remove("hidden");
+    }
+
+    function closeDocViewer() {
+      document.getElementById("docViewerModal").classList.add("hidden");
+      document.getElementById("docViewerFrame").src = "";
+    }
+
+    fetchDatabase();
+  </script>
+</body>
+</html>

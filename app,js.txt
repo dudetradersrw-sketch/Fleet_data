@@ -1,0 +1,367 @@
+// ==========================================
+// 1. GLOBAL AUTHENTICATION & CONFIGURATION
+// ==========================================
+
+// Strict Global Authentication Enforcement
+(function enforceAuth() {
+  const currentUser = sessionStorage.getItem("fleetDesk_currentUser");
+  const path = window.location.pathname;
+  const isLoginPage = path.includes("login.html") || window.location.href.includes("login.html");
+
+  if (!currentUser && !isLoginPage) {
+    window.location.href = "login.html";
+  }
+})();
+
+// Google Apps Script Web App URL (Update if your deployment URL changes)
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzL5n4xR10e2sQ5J1Wl.../exec"; // Replace with your actual deployment URL if needed
+
+let globalData = {};
+
+// Retrieve current logged-in user object
+function checkAuth() {
+  const currentUser = sessionStorage.getItem("fleetDesk_currentUser");
+  return currentUser ? JSON.parse(currentUser) : null;
+}
+
+// Render user badge in header center
+function renderUserHeaderBadge() {
+  const user = checkAuth();
+  if (!user) return "";
+  return `
+    <div class="hidden md:flex items-center gap-2 bg-gray-50 border px-3 py-1.5 rounded-full shadow-sm text-xs">
+      <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+      <span class="font-bold text-gray-800">${user.Name || user.Username}</span>
+      <span class="text-gray-400">|</span>
+      <span class="bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-semibold">${user.Category || 'Administrator'}</span>
+    </div>
+  `;
+}
+
+// Check module permissions
+function hasPermission(moduleName) {
+  const user = checkAuth();
+  if (!user) return false;
+  if (user.Username === "admin" || user.IsMasterAdmin) return true;
+  const permissions = user.Permissions || [];
+  return permissions.includes(moduleName) || permissions.includes("All");
+}
+
+
+// ==========================================
+// 2. SIDEBAR & NAVIGATION RENDERER
+// ==========================================
+
+function renderSidebar(activePage) {
+  const currentUser = checkAuth() || {};
+  const isAdmin = currentUser.Username === "admin" || currentUser.IsMasterAdmin;
+
+  const pages = [
+    { name: "Dashboard", file: "index.html", icon: "📊" },
+    { name: "Trucks", file: "trucks.html", icon: "🚛" },
+    { name: "Trailers", file: "trailers.html", icon: "🚃" },
+    { name: "Combinations", file: "combinations.html", icon: "🔗" },
+    { name: "Drivers", file: "drivers.html", icon: "👤" },
+    { name: "Garage", file: "garage.html", icon: "🔧" },
+    { name: "Monitoring & Alerts", file: "monitoring.html", icon: "⚠️" },
+    { name: "Containers", file: "containers.html", icon: "📦" },
+    { name: "Invoices", file: "invoices.html", icon: "📄" },
+    { name: "Expenses", file: "expenses.html", icon: "📉" },
+    { name: "Contacts", file: "contacts.html", icon: "📇" }
+  ];
+
+  // Dynamically add Users management tab for Admin
+  if (isAdmin) {
+    pages.push({ name: "Users", file: "users.html", icon: "🔐" });
+  }
+
+  return `
+    <aside class="w-64 bg-slate-900 text-slate-300 flex flex-col justify-between hidden md:flex h-screen sticky top-0">
+      <div>
+        <div class="p-5 text-xl font-bold text-white flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            🚚 <span>FleetDesk</span>
+          </div>
+        </div>
+        <nav class="mt-2 px-2 space-y-1 text-sm overflow-y-auto max-h-[calc(100vh-140px)]">
+          ${pages.map(p => `
+            <a href="${p.file}" class="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-800 ${activePage === p.name ? 'bg-slate-800 text-white font-semibold' : ''}">
+              <span>${p.icon}</span>${p.name}
+            </a>
+          `).join('')}
+        </nav>
+      </div>
+      
+      <div class="p-4 border-t border-slate-800 flex items-center justify-between text-xs">
+        <div>
+          <p class="font-bold text-white">${currentUser.Name || currentUser.Username || 'User'}</p>
+          <p class="text-slate-400">${currentUser.Category || 'Administrator'}</p>
+        </div>
+        <button onclick="sessionStorage.clear(); window.location.href='login.html';" class="bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white px-2 py-1 rounded-lg transition font-semibold" title="Sign Out">Logout</button>
+      </div>
+    </aside>
+
+    <!-- Global Preview / Details Modal -->
+    <div id="previewModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden">
+      <div class="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl relative max-h-[90vh] overflow-y-auto">
+        <button onclick="closeModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
+        <h3 id="modalTitle" class="text-xl font-bold text-gray-800 mb-4 border-b pb-2">Record Details</h3>
+        <div id="modalBody" class="space-y-3 text-sm text-gray-700"></div>
+        <div class="mt-6 flex justify-end gap-2">
+          <button onclick="closeModal()" class="bg-gray-200 text-gray-700 px-4 py-2 rounded text-sm hover:bg-gray-300">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Global Data Entry / Edit Form Modal -->
+    <div id="formModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden">
+      <div class="bg-white rounded-xl max-w-2xl w-full p-6 shadow-xl relative max-h-[90vh] overflow-y-auto">
+        <button onclick="closeFormModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
+        <h3 id="formModalTitle" class="text-xl font-bold text-gray-800 mb-4 border-b pb-2">Add New Record</h3>
+        <div id="formModalBody"></div>
+      </div>
+    </div>
+  `;
+}
+
+
+// ==========================================
+// 3. DATABASE SYNC & FETCHING
+// ==========================================
+
+async function fetchDatabase(forceRefresh = false) {
+  try {
+    const cachedData = sessionStorage.getItem("fleetDesk_db");
+    if (!forceRefresh && cachedData) {
+      globalData = JSON.parse(cachedData);
+      if (typeof window.onDataLoaded === "function") {
+        window.onDataLoaded(globalData);
+      }
+      return;
+    }
+
+    const res = await fetch(SCRIPT_URL, { method: "GET", redirect: "follow" });
+    const textData = await res.text();
+    const parsedData = JSON.parse(textData);
+    
+    globalData = {};
+    Object.keys(parsedData).forEach(sheet => {
+      // Sort LIFO (newest records first)
+      globalData[sheet] = Array.isArray(parsedData[sheet]) ? [...parsedData[sheet]].reverse() : [];
+    });
+    
+    sessionStorage.setItem("fleetDesk_db", JSON.stringify(globalData));
+
+    if (typeof window.onDataLoaded === "function") {
+      window.onDataLoaded(globalData);
+    }
+  } catch (err) {
+    console.error("Connection failed:", err);
+    showNotification("Failed to connect to Google Sheets backend.", "error");
+  }
+}
+
+
+// ==========================================
+// 4. NOTIFICATIONS & MODAL HELPERS
+// ==========================================
+
+function showNotification(message, type = "success") {
+  const existingToast = document.getElementById("fleetToast");
+  if (existingToast) existingToast.remove();
+
+  const toast = document.createElement("div");
+  toast.id = "fleetToast";
+  toast.className = `fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-semibold text-white transition-all transform duration-300 translate-y-[-20px] opacity-0 ${
+    type === "success" ? "bg-emerald-600" : "bg-red-600"
+  }`;
+  toast.innerHTML = `✨ ${message}`;
+  document.body.appendChild(toast);
+
+  setTimeout(() => {
+    toast.classList.remove("translate-y-[-20px]", "opacity-0");
+    toast.classList.add("translate-y-0", "opacity-100");
+  }, 10);
+
+  setTimeout(() => {
+    toast.classList.remove("translate-y-0", "opacity-100");
+    toast.classList.add("translate-y-[-20px]", "opacity-0");
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
+}
+
+function openFormModal(title, htmlContent) {
+  document.getElementById("formModalTitle").innerText = title;
+  document.getElementById("formModalBody").innerHTML = htmlContent;
+  document.getElementById("formModal").classList.remove("hidden");
+}
+
+function closeFormModal() {
+  document.getElementById("formModal").classList.add("hidden");
+}
+
+function closeModal() {
+  document.getElementById("previewModal").classList.add("hidden");
+}
+
+
+// ==========================================
+// 5. SERVER COMMUNICATION (CRUD)
+// ==========================================
+
+async function sendToServer(sheetName, action, data) {
+  try {
+    if (!globalData[sheetName]) globalData[sheetName] = [];
+    
+    if (action === "add") {
+      data.ID = data.ID || "FD-" + Date.now().toString().slice(-4);
+      globalData[sheetName].unshift(data);
+    } else if (action === "update") {
+      const index = globalData[sheetName].findIndex(row => String(row.ID) === String(data.ID));
+      if (index !== -1) {
+        globalData[sheetName][index] = { ...globalData[sheetName][index], ...data };
+      }
+    } else if (action === "delete") {
+      globalData[sheetName] = globalData[sheetName].filter(row => String(row.ID) !== String(data.id));
+    } else if (action === "archive") {
+      const item = globalData[sheetName].find(row => String(row.ID) === String(data.id));
+      if (item) item.Status = "Archived";
+    }
+
+    if (typeof window.onDataLoaded === "function") {
+      window.onDataLoaded(globalData);
+    }
+    
+    closeFormModal();
+    showNotification("Operation completed successfully!");
+
+    const res = await fetch(SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ sheet: sheetName, action: action, data: data })
+    });
+    
+    const result = await res.json();
+    if (result.status !== "success") {
+      showNotification("Warning: Saved locally, but server reported: " + result.message, "error");
+    }
+
+    sessionStorage.removeItem("fleetDesk_db");
+    fetchDatabase(true);
+
+  } catch (err) {
+    console.error("Server error:", err);
+    showNotification("Server error: " + err.toString(), "error");
+  }
+}
+
+
+// ==========================================
+// 6. TABLE TOOLS (SEARCH, EXPORT, ACTIONS)
+// ==========================================
+
+function filterTable(event, tableId) {
+  const query = event.target.value.toLowerCase();
+  const rows = document.querySelectorAll(`#${tableId} tbody tr`);
+  rows.forEach(row => {
+    const text = row.innerText.toLowerCase();
+    row.style.display = text.includes(query) ? "" : "none";
+  });
+}
+
+function renderActionCell(sheetName, id) {
+  return `
+    <div class="flex items-center justify-center gap-2">
+      <button onclick="triggerEdit('${sheetName}', '${id}')" class="bg-amber-500 hover:bg-amber-600 text-white px-2.5 py-1 rounded text-xs font-semibold transition" title="Edit Record">✏️ Edit</button>
+      <button onclick="triggerDelete('${sheetName}', '${id}')" class="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded text-xs font-semibold transition" title="Delete Record">🗑️ Delete</button>
+    </div>
+  `;
+}
+
+function triggerEdit(sheetName, id) {
+  const item = (globalData[sheetName] || []).find(r => String(r.ID) === String(id));
+  if (item && typeof window.onEditTriggered === "function") {
+    window.onEditTriggered(sheetName, item);
+  }
+}
+
+async function triggerDelete(sheetName, id) {
+  if (confirm(`Are you sure you want to delete record ${id}?`)) {
+    await sendToServer(sheetName, "delete", { id });
+  }
+}
+
+function renderColumnVisibilityMenu(tableId, columns) {
+  return `
+    <div class="relative inline-block text-left">
+      <button onclick="toggleColumnMenu('${tableId}')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded text-sm font-medium transition">👁️ Columns</button>
+      <div id="${tableId}_colMenu" class="hidden absolute right-0 mt-2 w-48 bg-white border rounded-lg shadow-xl p-2 z-20 space-y-1 text-xs">
+        ${columns.map((col, idx) => `
+          <label class="flex items-center gap-2 hover:bg-gray-50 p-1 rounded cursor-pointer">
+            <input type="checkbox" checked onchange="toggleColumnVisibility('${tableId}', ${idx}, this.checked)" class="rounded"> ${col}
+          </label>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function toggleColumnMenu(tableId) {
+  const menu = document.getElementById(`${tableId}_colMenu`);
+  menu.classList.toggle("hidden");
+}
+
+function toggleColumnVisibility(tableId, colIndex, isVisible) {
+  const table = document.getElementById(tableId);
+  if (!table) return;
+  const rows = table.querySelectorAll("tr");
+  rows.forEach(row => {
+    const cell = row.children[colIndex];
+    if (cell) cell.style.display = isVisible ? "" : "none";
+  });
+}
+
+function exportCSVData(sheetName, dataList) {
+  if (!dataList || dataList.length === 0) {
+    showNotification("No data available to export.", "error");
+    return;
+  }
+  const keys = Object.keys(dataList[0]);
+  let csv = keys.join(",") + "\n";
+  dataList.forEach(row => {
+    csv += keys.map(k => `"${String(row[k] || '').replace(/"/g, '""')}"`).join(",") + "\n";
+  });
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.setAttribute("href", url);
+  a.setAttribute("download", `${sheetName}_export.csv`);
+  a.click();
+  showNotification("CSV export generated successfully!");
+}
+
+function exportPDFTable(sheetName, dataList) {
+  if (!dataList || dataList.length === 0) {
+    showNotification("No data available to export.", "error");
+    return;
+  }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.setFontSize(16);
+  doc.text(`FleetDesk - ${sheetName} Report`, 14, 20);
+  doc.setFontSize(10);
+  doc.text(`Generated on: ${new Date().toISOString().slice(0, 10)}`, 14, 28);
+  
+  let y = 38;
+  dataList.slice(0, 25).forEach((row, i) => {
+    const summary = Object.values(row).slice(0, 4).join(" | ");
+    doc.text(`${i + 1}. ${summary}`, 14, y);
+    y += 8;
+    if (y > 280) {
+      doc.addPage();
+      y = 20;
+    }
+  });
+  doc.save(`${sheetName}_Report.pdf`);
+  showNotification("PDF report downloaded successfully!");
+}

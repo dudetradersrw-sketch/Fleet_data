@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FleetDesk - Invoices & Proformas</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen overflow-hidden">
+  <div id="sidebarContainer"></div>
+  <main class="flex-1 flex flex-col h-screen overflow-y-auto">
+    <header class="bg-white border-b px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+      <h1 class="text-xl font-bold text-gray-800">Invoices & Proformas Management</h1>
+      <button onclick="fetchDatabase(true)" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm transition">🔄 Sync Data</button>
+    </header>
+    <div class="p-6 space-y-6" id="pageContent">Loading...</div>
+  </main>
+  <script>
+    document.getElementById("sidebarContainer").innerHTML = renderSidebar("Invoices");
+
+    window.onDataLoaded = function(db) {
+      const invoices = db.Invoices || [];
+      const columns = ["ID", "Type", "Container No", "Client", "Amount", "Paid", "Balance", "Created Date", "Due Date", "Actions"];
+
+      let tableRows = "";
+      invoices.forEach(i => {
+        const balance = Number(i.Balance || 0);
+        let statusBadge = balance === 0 
+          ? '<span class="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-xs font-medium">Fully Paid</span>' 
+          : '<span class="bg-amber-100 text-amber-800 px-2 py-0.5 rounded text-xs font-medium">Balance Due</span>';
+
+        // Resolve container number from ContainerID if stored as ID
+        const container = (db.Containers || []).find(c => String(c.ID) === String(i.ContainerID) || String(c.ContainerNo) === String(i.ContainerID));
+        const containerDisplay = container ? container.ContainerNo : (i.ContainerID || 'General');
+
+        tableRows += `
+          <tr class="hover:bg-blue-50 cursor-pointer transition" onclick="openInvoiceHistoryModal('${i.ID}')" title="Click to view payment history & receipts">
+            <td class="p-3 font-mono text-xs text-gray-500">${i.ID || ''}</td>
+            <td class="p-3 font-semibold">${i.Type || ''}</td>
+            <td class="p-3 font-medium text-blue-700">${containerDisplay}</td>
+            <td class="p-3">${i.Client || ''}</td>
+            <td class="p-3 font-semibold">${Number(i.Amount || 0).toLocaleString()} RWF</td>
+            <td class="p-3 text-emerald-600 font-semibold">${Number(i.Paid || 0).toLocaleString()} RWF</td>
+            <td class="p-3 text-red-600 font-semibold">${balance.toLocaleString()} RWF ${statusBadge}</td>
+            <td class="p-3 text-xs text-gray-600">${i.Date || ''}</td>
+            <td class="p-3 text-xs text-gray-600">${i.DueDate || 'N/A'}</td>
+            <td class="p-3 text-center flex items-center justify-center gap-2" onclick="event.stopPropagation()">
+              <button onclick="openPaymentModal('${i.ID}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded text-xs font-semibold transition" title="Record Payment">💳 Pay</button>
+              ${renderActionCell('Invoices', i.ID)}
+            </td>
+          </tr>
+        `;
+      });
+
+      document.getElementById("pageContent").innerHTML = `
+        <div class="mb-2">
+          <button onclick="openInvoiceFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
+            ➕ Generate Invoice / Proforma
+          </button>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div class="p-4 border-b flex flex-col md:flex-row justify-between items-center gap-3">
+            <input type="text" placeholder="🔍 Search invoices..." oninput="filterTable(event, 'table_Invoices')" class="border px-3 py-1.5 rounded text-sm w-full md:w-72 outline-none">
+            <div class="flex items-center gap-2">
+              ${renderColumnVisibilityMenu('table_Invoices', columns)}
+              <button onclick="exportPDFTable('Invoices', globalData.Invoices)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm">📥 PDF</button>
+              <button onclick="exportCSVData('Invoices', globalData.Invoices)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm">📥 CSV</button>
+            </div>
+          </div>
+          <table class="w-full text-left border-collapse text-sm" id="table_Invoices">
+            <thead>
+              <tr class="bg-gray-50 text-gray-500">
+                <th class="p-3">ID</th><th class="p-3">Type</th><th class="p-3">Container No</th><th class="p-3">Client</th><th class="p-3">Amount</th><th class="p-3">Paid</th><th class="p-3">Balance</th><th class="p-3">Created Date</th><th class="p-3">Due Date</th><th class="p-3 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              ${tableRows}
+            </tbody>
+          </table>
+        </div>
+      `;
+    };
+
+    function openInvoiceFormModal(item = null) {
+      let containerOptions = '<option value="">Select Container</option>';
+      (globalData.Containers || []).forEach(c => {
+        const selected = item && (item.ContainerID === c.ID || item.ContainerID === c.ContainerNo) ? 'selected' : '';
+        containerOptions += `<option value="${c.ContainerNo}" ${selected}>Container: ${c.ContainerNo} - Client: ${c.Client}</option>`;
+      });
+
+      const html = `
+        <form onsubmit="submitInvoiceForm(event)" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <input type="hidden" id="i_edit_id" value="${item ? item.ID : ''}">
+          <div>
+            <label class="text-xs text-gray-500 block">Type</label>
+            <select id="i_type" required class="border p-2 rounded w-full">
+              <option value="Invoice" ${item && item.Type === 'Invoice' ? 'selected' : ''}>Invoice</option>
+              <option value="Proforma" ${item && item.Type === 'Proforma' ? 'selected' : ''}>Proforma Invoice</option>
+            </select>
+          </div>
+          <div><label class="text-xs text-gray-500 block">Container No</label><select id="i_cont" required class="border p-2 rounded w-full" onchange="autoFillInvoiceDetails()">${containerOptions}</select></div>
+          <div><label class="text-xs text-gray-500 block">Client Name</label><input type="text" id="i_client" value="${item ? item.Client || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <div><label class="text-xs text-gray-500 block">Due Date</label><input type="date" id="i_duedate" value="${item ? item.DueDate || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <div><label class="text-xs text-gray-500 block">Total Amount (RWF)</label><input type="number" id="i_amt" value="${item ? item.Amount || '' : ''}" required class="border p-2 rounded w-full" oninput="calcInvoiceBalance()"></div>
+          <div><label class="text-xs text-gray-500 block">Amount Paid (RWF)</label><input type="number" id="i_paid" value="${item ? item.Paid || 0 : 0}" required class="border p-2 rounded w-full" oninput="calcInvoiceBalance()"></div>
+          <div><label class="text-xs text-gray-500 block">Balance Due (RWF)</label><input type="number" id="i_bal" value="${item ? item.Balance || '' : ''}" readonly class="border p-2 rounded w-full bg-gray-50 font-bold"></div>
+          <button type="submit" class="md:col-span-2 bg-blue-600 text-white py-2.5 rounded font-semibold hover:bg-blue-700 transition">${item ? 'Update Invoice' : 'Create Invoice Record'}</button>
+        </form>
+      `;
+      openFormModal(item ? `Edit Invoice: ${item.ID}` : "Generate Invoice or Proforma", html);
+    }
+
+    function autoFillInvoiceDetails() {
+      const contNo = document.getElementById("i_cont").value;
+      const container = (globalData.Containers || []).find(c => c.ContainerNo === contNo);
+      if (container) {
+        document.getElementById("i_client").value = container.Client || "";
+        document.getElementById("i_amt").value = container.AgreedAmount || "";
+        calcInvoiceBalance();
+      }
+    }
+
+    function calcInvoiceBalance() {
+      const amt = parseFloat(document.getElementById("i_amt").value) || 0;
+      const paid = parseFloat(document.getElementById("i_paid").value) || 0;
+      document.getElementById("i_bal").value = Math.max(0, amt - paid);
+    }
+
+    // Modal to view historical payments and download receipt
+    function openInvoiceHistoryModal(invoiceId) {
+      const inv = (globalData.Invoices || []).find(i => String(i.ID) === String(invoiceId));
+      if (!inv) return;
+
+      const payments = inv.PaymentHistory ? (typeof inv.PaymentHistory === 'string' ? JSON.parse(inv.PaymentHistory) : inv.PaymentHistory) : [
+        { date: inv.Date || 'Initial', amount: inv.Paid || 0, type: 'Initial Record' }
+      ];
+
+      let historyRows = '';
+      payments.forEach((p, idx) => {
+        historyRows += `
+          <tr class="border-b">
+            <td class="p-2">${idx + 1}</td>
+            <td class="p-2">${p.date}</td>
+            <td class="p-2 font-semibold text-emerald-600">${Number(p.amount || 0).toLocaleString()} RWF</td>
+            <td class="p-2">${p.type || 'Payment'}</td>
+          </tr>
+        `;
+      });
+
+      const html = `
+        <div class="space-y-4">
+          <div class="bg-gray-50 p-4 rounded-xl text-sm space-y-1 border">
+            <p><strong>Invoice ID:</strong> ${inv.ID} (${inv.Type})</p>
+            <p><strong>Client:</strong> ${inv.Client}</p>
+            <p><strong>Container No:</strong> ${inv.ContainerID || 'N/A'}</p>
+            <p><strong>Total Amount:</strong> ${Number(inv.Amount || 0).toLocaleString()} RWF</p>
+            <p><strong>Total Paid:</strong> <span class="text-emerald-600 font-semibold">${Number(inv.Paid || 0).toLocaleString()} RWF</span></p>
+            <p><strong>Remaining Balance:</strong> <span class="text-red-600 font-bold">${Number(inv.Balance || 0).toLocaleString()} RWF</span></p>
+          </div>
+
+          <h4 class="font-semibold text-gray-700 text-sm">Payment Transaction History</h4>
+          <div class="max-h-48 overflow-y-auto border rounded-lg">
+            <table class="w-full text-left text-xs">
+              <thead><tr class="bg-gray-100"><th class="p-2">#</th><th class="p-2">Date</th><th class="p-2">Amount Paid</th><th class="p-2">Type</th></tr></thead>
+              <tbody>${historyRows}</tbody>
+            </table>
+          </div>
+
+          <button onclick="downloadPaymentReceiptPDF('${inv.ID}')" class="w-full bg-indigo-600 text-white py-2.5 rounded-lg font-semibold hover:bg-indigo-700 transition flex items-center justify-center gap-2">
+            📥 Download Payment Receipt (PDF)
+          </button>
+        </div>
+      `;
+      openFormModal(`Payment History: Invoice ${inv.ID}`, html);
+    }
+
+    function openPaymentModal(invoiceId) {
+      const inv = (globalData.Invoices || []).find(i => String(i.ID) === String(invoiceId));
+      if (!inv) return;
+
+      const currentBalance = parseFloat(inv.Balance) || (parseFloat(inv.Amount) - parseFloat(inv.Paid)) || 0;
+
+      const html = `
+        <form onsubmit="submitPaymentForm(event, '${inv.ID}')" class="space-y-4">
+          <div class="bg-gray-50 p-3 rounded text-sm space-y-1">
+            <p><strong>Invoice ID:</strong> ${inv.ID}</p>
+            <p><strong>Client:</strong> ${inv.Client}</p>
+            <p><strong>Container No:</strong> ${inv.ContainerID}</p>
+            <p><strong>Current Balance Due:</strong> <span class="text-red-600 font-bold">${currentBalance.toLocaleString()} RWF</span></p>
+          </div>
+
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Payment Type</label>
+            <select id="p_type" class="border p-2 rounded w-full" onchange="handlePaymentTypeChange(${currentBalance})">
+              <option value="Full">Full Payment (${currentBalance.toLocaleString()} RWF)</option>
+              <option value="Partial">Partial Payment</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Amount to Pay Now (RWF)</label>
+            <input type="number" id="p_amount" value="${currentBalance}" max="${currentBalance}" required class="border p-2 rounded w-full font-semibold">
+          </div>
+
+          <button type="submit" class="w-full bg-emerald-600 text-white py-2.5 rounded font-semibold hover:bg-emerald-700 transition">Confirm & Record Payment (Goes to Income)</button>
+        </form>
+      `;
+      openFormModal(`Record Payment: Invoice ${inv.ID}`, html);
+    }
+
+    function handlePaymentTypeChange(maxBalance) {
+      const pType = document.getElementById("p_type").value;
+      const amtInput = document.getElementById("p_amount");
+      if (pType === "Full") {
+        amtInput.value = maxBalance;
+        amtInput.readOnly = true;
+      } else {
+        amtInput.value = "";
+        amtInput.readOnly = false;
+        amtInput.focus();
+      }
+    }
+
+    async function submitPaymentForm(e, invId) {
+      e.preventDefault();
+      const inv = (globalData.Invoices || []).find(i => String(i.ID) === String(invId));
+      if (!inv) return;
+
+      const payNow = parseFloat(document.getElementById("p_amount").value) || 0;
+      const previousPaid = parseFloat(inv.Paid) || 0;
+      const totalAmount = parseFloat(inv.Amount) || 0;
+
+      const newPaid = previousPaid + payNow;
+      const newBalance = Math.max(0, totalAmount - newPaid);
+      const todayStr = new Date().toISOString().slice(0, 10);
+
+      // Parse existing history or initialize
+      let history = inv.PaymentHistory ? (typeof inv.PaymentHistory === 'string' ? JSON.parse(inv.PaymentHistory) : inv.PaymentHistory) : [];
+      history.push({ date: todayStr, amount: payNow, type: document.getElementById("p_type").value });
+
+      const updatedData = {
+        ID: inv.ID,
+        Type: inv.Type,
+        ContainerID: inv.ContainerID,
+        Client: inv.Client,
+        Amount: totalAmount,
+        Paid: newPaid,
+        Balance: newBalance,
+        Date: inv.Date,
+        DueDate: inv.DueDate,
+        PaymentHistory: JSON.stringify(history)
+      };
+
+      // Also record into Expenses / Income backend if desired, or let Invoices represent revenue
+      await sendToServer("Invoices", "update", updatedData);
+    }
+
+    function downloadPaymentReceiptPDF(invoiceId) {
+      const inv = (globalData.Invoices || []).find(i => String(i.ID) === String(invoiceId));
+      if (!inv) return;
+
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+
+      doc.setFontSize(18);
+      doc.setTextColor(30, 41, 59);
+      doc.text("FAIRFAST LTD - PAYMENT RECEIPT", 14, 20);
+
+      doc.setFontSize(11);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Receipt for Amount Received from Client`, 14, 28);
+      
+      doc.setLineWidth(0.5);
+      doc.line(14, 33, 196, 33);
+
+      doc.setFontSize(12);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`Invoice ID: ${inv.ID}`, 14, 45);
+      doc.text(`Client Name: ${inv.Client}`, 14, 53);
+      doc.text(`Container No: ${inv.ContainerID || 'N/A'}`, 14, 61);
+      doc.text(`Total Invoice Amount: ${Number(inv.Amount || 0).toLocaleString()} RWF`, 14, 69);
+      doc.text(`Total Amount Paid: ${Number(inv.Paid || 0).toLocaleString()} RWF`, 14, 77);
+      doc.text(`Remaining Balance Due: ${Number(inv.Balance || 0).toLocaleString()} RWF`, 14, 85);
+      doc.text(`Due Date: ${inv.DueDate || 'N/A'}`, 14, 93);
+
+      doc.save(`Receipt_${inv.ID}_${inv.Client}.pdf`);
+    }
+
+    window.onEditTriggered = function(sheetName, item) {
+      if (sheetName === 'Invoices') openInvoiceFormModal(item);
+    };
+
+    async function submitInvoiceForm(e) {
+      e.preventDefault();
+      const editId = document.getElementById("i_edit_id").value;
+      const data = {
+        ID: editId || undefined,
+        Type: document.getElementById("i_type").value,
+        ContainerID: document.getElementById("i_cont").value,
+        Client: document.getElementById("i_client").value,
+        Amount: document.getElementById("i_amt").value,
+        Paid: document.getElementById("i_paid").value || 0,
+        Balance: document.getElementById("i_bal").value,
+        Date: editId ? (document.getElementById("i_edit_id").dataset.date || new Date().toISOString().slice(0, 10)) : new Date().toISOString().slice(0, 10),
+        DueDate: document.getElementById("i_duedate").value
+      };
+      await sendToServer("Invoices", editId ? "update" : "add", data);
+    }
+
+    fetchDatabase();
+  </script>
+</body>
+</html>

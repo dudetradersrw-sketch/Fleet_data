@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FleetDesk - Drivers Management</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen overflow-hidden">
+  <div id="sidebarContainer"></div>
+  <main class="flex-1 flex flex-col h-screen overflow-y-auto">
+    <header class="bg-white border-b px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+      <h1 class="text-xl font-bold text-gray-800">Drivers Management</h1>
+      <button onclick="fetchDatabase(true)" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm transition">🔄 Sync Data</button>
+    </header>
+    <div class="p-6 space-y-6" id="pageContent">Loading...</div>
+  </main>
+  <script>
+    document.getElementById("sidebarContainer").innerHTML = renderSidebar("Drivers");
+
+    window.onDataLoaded = function(db) {
+      const drivers = db.Drivers || [];
+      const columns = ["ID", "FullName", "Nickname", "Tel", "License", "LicenseExpiry", "Age", "Address", "Actions"];
+
+      let tableRows = "";
+      drivers.forEach(d => {
+        const today = new Date();
+        const exp = new Date(d.LicenseExpiry || "2000-01-01");
+        const diffDays = Math.ceil((exp - today) / (1000 * 60 * 60 * 24));
+        let badge = "";
+        if (diffDays <= 30 && diffDays >= 0) badge = '<span class="bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded text-xs ml-1">Renovate Soon</span>';
+        if (diffDays < 0) badge = '<span class="bg-red-100 text-red-800 px-2 py-0.5 rounded text-xs ml-1">Expired</span>';
+
+        tableRows += `
+          <tr>
+            <td class="p-3">${d.ID || ''}</td>
+            <td class="p-3 font-semibold">${d.FullName || ''}</td>
+            <td class="p-3">${d.Nickname || ''}</td>
+            <td class="p-3">${d.Tel || ''}</td>
+            <td class="p-3">${d.License || ''}</td>
+            <td class="p-3">${d.LicenseExpiry || ''} ${badge}</td>
+            <td class="p-3">${d.Age || ''}</td>
+            <td class="p-3">${d.Address || ''}</td>
+            <td class="p-3 text-center">${renderActionCell('Drivers', d.ID)}</td>
+          </tr>
+        `;
+      });
+
+      document.getElementById("pageContent").innerHTML = `
+        <div class="mb-2">
+          <button onclick="openDriverFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
+            ➕ Add New Driver
+          </button>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div class="p-4 border-b flex flex-col md:flex-row justify-between items-center gap-3">
+            <input type="text" placeholder="🔍 Search drivers..." oninput="filterTable(event, 'table_Drivers')" class="border px-3 py-1.5 rounded text-sm w-full md:w-72 outline-none">
+            <div class="flex items-center gap-2">
+              ${renderColumnVisibilityMenu('table_Drivers', columns)}
+              <button onclick="exportPDFTable('Drivers', globalData.Drivers)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm">📥 PDF</button>
+              <button onclick="exportCSVData('Drivers', globalData.Drivers)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm">📥 CSV</button>
+            </div>
+          </div>
+          <table class="w-full text-left border-collapse text-sm" id="table_Drivers">
+            <thead>
+              <tr class="bg-gray-50 text-gray-500">
+                <th class="p-3">ID</th><th class="p-3">Full Name</th><th class="p-3">Nickname</th><th class="p-3">Tel</th><th class="p-3">License No</th><th class="p-3">License Expiry</th><th class="p-3">Age</th><th class="p-3">Address</th><th class="p-3 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              ${tableRows}
+            </tbody>
+          </table>
+        </div>
+      `;
+    };
+
+    function openDriverFormModal(item = null) {
+      const html = `
+        <form onsubmit="submitDriverForm(event)" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <input type="hidden" id="d_edit_id" value="${item ? item.ID : ''}">
+          <div><label class="text-xs text-gray-500 block">Full Name</label><input type="text" id="d_name" value="${item ? item.FullName || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <div><label class="text-xs text-gray-500 block">Nickname</label><input type="text" id="d_nick" value="${item ? item.Nickname || '' : ''}" class="border p-2 rounded w-full"></div>
+          <div><label class="text-xs text-gray-500 block">Telephone</label><input type="text" id="d_tel" value="${item ? item.Tel || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <div><label class="text-xs text-gray-500 block">Driving Licence No</label><input type="text" id="d_lic" value="${item ? item.License || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <div><label class="text-xs text-gray-500 block">Licence Expiry Date</label><input type="date" id="d_exp" value="${item ? item.LicenseExpiry || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <div><label class="text-xs text-gray-500 block">Age</label><input type="number" id="d_age" value="${item ? item.Age || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <div class="md:col-span-2"><label class="text-xs text-gray-500 block">Address</label><input type="text" id="d_addr" value="${item ? item.Address || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <button type="submit" class="md:col-span-2 bg-blue-600 text-white py-2.5 rounded font-semibold hover:bg-blue-700 transition">${item ? 'Update Driver' : 'Save Driver'}</button>
+        </form>
+      `;
+      openFormModal(item ? `Edit Driver: ${item.ID}` : "Add New Driver", html);
+    }
+
+    window.onEditTriggered = function(sheetName, item) {
+      if (sheetName === 'Drivers') openDriverFormModal(item);
+    };
+
+    async function submitDriverForm(e) {
+      e.preventDefault();
+      const editId = document.getElementById("d_edit_id").value;
+      const data = {
+        ID: editId || undefined,
+        FullName: document.getElementById("d_name").value,
+        Nickname: document.getElementById("d_nick").value,
+        Tel: document.getElementById("d_tel").value,
+        License: document.getElementById("d_lic").value,
+        LicenseExpiry: document.getElementById("d_exp").value,
+        Age: document.getElementById("d_age").value,
+        Address: document.getElementById("d_addr").value
+      };
+      await sendToServer("Drivers", editId ? "update" : "add", data);
+    }
+
+    fetchDatabase();
+  </script>
+</body>
+</html>

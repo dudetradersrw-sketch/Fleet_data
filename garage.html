@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FleetDesk - Garage & Repairs</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen overflow-hidden">
+  <div id="sidebarContainer"></div>
+  <main class="flex-1 flex flex-col h-screen overflow-y-auto">
+    <header class="bg-white border-b px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+      <h1 class="text-xl font-bold text-gray-800">Garage & Repairs</h1>
+      <button onclick="fetchDatabase(true)" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm transition">🔄 Sync Data</button>
+    </header>
+    <div class="p-6 space-y-6" id="pageContent">Loading...</div>
+  </main>
+  <script>
+    document.getElementById("sidebarContainer").innerHTML = renderSidebar("Garage");
+
+    window.onDataLoaded = function(db) {
+      const garageList = db.Garage || [];
+      const combinations = db.Combinations || [];
+      const trucks = db.Trucks || [];
+      const trailers = db.Trailers || [];
+      const trips = db.Trips || [];
+
+      const columns = ["ID", "Date", "Item", "Description", "Qty", "Currency", "Price", "Total (USD)", "Shop Ref", "Vehicle", "Trip", "Actions"];
+
+      let tableRows = "";
+      garageList.forEach(g => {
+        const combination = combinations.find(c => String(c.ID) === String(g.TruckID) || String(c.TruckID) === String(g.TruckID));
+        let displayVehicle = g.TruckID || 'N/A';
+
+        if (combination) {
+          const t = trucks.find(tr => String(tr.ID) === String(combination.TruckID) || String(tr.PlateNumber) === String(combination.TruckID));
+          const tr = trailers.find(trl => String(trl.ID) === String(combination.TrailerID) || String(trl.PlateNumber) === String(combination.TrailerID));
+          const tPlate = t ? (t.PlateNumber || t.Registration || t.ID) : combination.TruckID;
+          const trPlate = tr ? (tr.PlateNumber || tr.Registration || tr.ID) : 'No Trailer';
+          displayVehicle = `${tPlate}/${trPlate}`;
+        } else {
+          const t = trucks.find(tr => String(tr.ID) === String(g.TruckID) || String(tr.PlateNumber) === String(g.TruckID));
+          if (t) displayVehicle = t.PlateNumber || t.Registration || t.ID;
+        }
+
+        const trip = trips.find(tr => String(tr.ID) === String(g.TripID));
+        const displayTrip = trip ? `Trip [${trip.TripNumber}]` : 'None';
+
+        tableRows += `
+          <tr class="hover:bg-gray-50 border-b">
+            <td class="p-3 text-xs text-gray-500">${g.ID || ''}</td>
+            <td class="p-3 text-xs">${g.Date || ''}</td>
+            <td class="p-3 font-semibold text-gray-800">${g.Item || ''}</td>
+            <td class="p-3 text-gray-600 text-xs">${g.Description || ''}</td>
+            <td class="p-3">${g.Qty || ''}</td>
+            <td class="p-3">${g.Currency || 'USD'}</td>
+            <td class="p-3">${g.Price || ''}</td>
+            <td class="p-3 font-semibold text-blue-600">$${g.TotalUSD || g.PriceUSD || 0}</td>
+            <td class="p-3 text-gray-600 text-xs">${g.ShopRef || ''}</td>
+            <td class="p-3 font-semibold text-indigo-700">🚛 ${displayVehicle}</td>
+            <td class="p-3 font-medium text-blue-600">🚀 ${displayTrip}</td>
+            <td class="p-3 text-center relative overflow-visible">
+              <div class="inline-block relative">
+                <button onclick="toggleActionDropdown('${g.ID}')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded text-xs font-semibold transition border shadow-sm">
+                  Actions ▼
+                </button>
+                <div id="actionMenu_${g.ID}" class="hidden absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-2xl z-50 py-1 text-left text-xs space-y-0.5">
+                  <button onclick="editRecord('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-amber-50 text-amber-800 font-medium">✏️ Edit</button>
+                  <button onclick="previewRecord('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-blue-50 text-blue-800 font-medium">👁️ Preview</button>
+                  <button onclick="downloadReceipt('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-indigo-50 text-indigo-800 font-medium">📄 Download</button>
+                  <button onclick="archiveRecord('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-gray-50 text-gray-800 font-medium">📦 Archive</button>
+                  <button onclick="deleteRecord('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-red-50 text-red-800 font-medium border-t">🗑️ Delete</button>
+                </div>
+              </div>
+            </td>
+          </tr>
+        `;
+      });
+
+      document.getElementById("pageContent").innerHTML = `
+        <div class="mb-2">
+          <button onclick="openGarageFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
+            ➕ Add Garage Record
+          </button>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div class="p-4 border-b flex flex-col md:flex-row justify-between items-center gap-3">
+            <input type="text" placeholder="🔍 Search garage records..." oninput="filterTable(event, 'table_Garage')" class="border px-3 py-1.5 rounded text-sm w-full md:w-72 outline-none">
+            <div class="flex items-center gap-2">
+              ${renderColumnVisibilityMenu('table_Garage', columns)}
+              <button onclick="exportPDFTable('Garage', globalData.Garage)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 PDF</button>
+              <button onclick="exportCSVData('Garage', globalData.Garage)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 CSV</button>
+            </div>
+          </div>
+          <div class="overflow-x-auto min-h-[300px]">
+            <table class="w-full text-left border-collapse text-sm whitespace-nowrap" id="table_Garage">
+              <thead>
+                <tr class="bg-gray-50 text-gray-500 text-xs">
+                  <th class="p-3">ID</th>
+                  <th class="p-3">Date</th>
+                  <th class="p-3">Item</th>
+                  <th class="p-3">Description</th>
+                  <th class="p-3">Qty</th>
+                  <th class="p-3">Currency</th>
+                  <th class="p-3">Price</th>
+                  <th class="p-3">Total (USD)</th>
+                  <th class="p-3">Shop Ref</th>
+                  <th class="p-3">Vehicle</th>
+                  <th class="p-3">Trip</th>
+                  <th class="p-3 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+                ${tableRows || '<tr><td colspan="12" class="p-4 text-center text-gray-400">No garage records found.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    };
+
+    function toggleActionDropdown(id) {
+      document.querySelectorAll("[id^='actionMenu_']").forEach(menu => {
+        if (menu.id !== `actionMenu_${id}`) menu.classList.add('hidden');
+      });
+      const menu = document.getElementById(`actionMenu_${id}`);
+      if (menu) menu.classList.toggle('hidden');
+    }
+
+    window.addEventListener('click', function(e) {
+      if (!e.target.closest("button[onclick^='toggleActionDropdown']")) {
+        document.querySelectorAll("[id^='actionMenu_']").forEach(menu => menu.classList.add('hidden'));
+      }
+    });
+
+    function openGarageFormModal(item = null) {
+      const combinations = globalData.Combinations || [];
+      const trucks = globalData.Trucks || [];
+      const trailers = globalData.Trailers || [];
+      const trips = globalData.Trips || [];
+
+      let tripOptions = '<option value="">Select Trip (Optional)</option>';
+      trips.forEach(tr => {
+        const selected = item && item.TripID === tr.ID ? 'selected' : '';
+        tripOptions += `<option value="${tr.ID}" ${selected}>Trip [${tr.TripNumber}]</option>`;
+      });
+
+      let combOptions = '<option value="">Select Vehicle Combination</option>';
+      combinations.forEach(c => {
+        const t = trucks.find(tr => String(tr.ID) === String(c.TruckID) || String(tr.PlateNumber) === String(c.TruckID));
+        const tr = trailers.find(trl => String(trl.ID) === String(c.TrailerID) || String(trl.PlateNumber) === String(c.TrailerID));
+        const tPlate = t ? (t.PlateNumber || t.Registration || t.ID) : c.TruckID;
+        const trPlate = tr ? (tr.PlateNumber || tr.Registration || tr.ID) : 'No Trailer';
+        const comboLabel = `${tPlate}/${trPlate}`;
+        
+        const selected = item && (String(item.TruckID) === String(c.ID) || String(item.TruckID) === String(c.TruckID)) ? 'selected' : '';
+        combOptions += `<option value="${c.ID}" ${selected}>${comboLabel}</option>`;
+      });
+
+      const html = `
+        <form onsubmit="submitGarageForm(event)" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <input type="hidden" id="g_edit_id" value="${item ? item.ID : ''}">
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Date</label>
+            <input type="date" id="g_date" value="${item ? item.Date || '' : new Date().toISOString().split('T')[0]}" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Spare Part / Item</label>
+            <input type="text" id="g_item" value="${item ? item.Item || '' : ''}" placeholder="e.g. Engine Oil, Brake Pads" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div class="md:col-span-2">
+            <label class="text-xs text-gray-500 block mb-1">Description</label>
+            <input type="text" id="g_desc" value="${item ? item.Description || '' : ''}" placeholder="Repair details" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Quantity</label>
+            <input type="number" id="g_qty" value="${item ? item.Qty || 1 : 1}" required class="border p-2 rounded w-full text-sm outline-none" oninput="calcGarageModalTotal()">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Currency & Price</label>
+            <div class="flex gap-2">
+              <select id="g_curr" class="border p-2 rounded w-1/3 text-sm outline-none bg-white" onchange="calcGarageModalTotal()">
+                <option value="USD" ${item && item.Currency === 'USD' ? 'selected' : ''}>USD ($)</option>
+                <option value="RWF" ${item && item.Currency === 'RWF' ? 'selected' : ''}>RWF (FRW)</option>
+              </select>
+              <input type="number" step="0.01" id="g_price" value="${item ? item.Price || '' : ''}" placeholder="Price" required class="border p-2 rounded w-2/3 text-sm outline-none" oninput="calcGarageModalTotal()">
+            </div>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Exchange Rate to USD</label>
+            <input type="number" step="0.0001" id="g_rate" value="${item ? item.ExchangeRate || 1380 : 1380}" class="border p-2 rounded w-full text-sm outline-none" oninput="calcGarageModalTotal()">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Total USD (Auto)</label>
+            <input type="text" id="g_total" value="${item ? item.TotalUSD || '' : ''}" readonly class="border p-2 rounded w-full bg-gray-50 font-bold text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Shop Name & No</label>
+            <input type="text" id="g_shop" value="${item ? item.ShopRef || '' : ''}" placeholder="Shop reference" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Vehicle Combination</label>
+            <select id="g_truck" required class="border p-2 rounded w-full text-sm outline-none bg-white">${combOptions}</select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Attach to Trip</label>
+            <select id="g_trip" class="border p-2 rounded w-full text-sm outline-none bg-white">${tripOptions}</select>
+          </div>
+          <button type="submit" class="md:col-span-2 bg-blue-600 text-white py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition">
+            ${item ? 'Update Garage Record' : 'Save Garage Record'}
+          </button>
+        </form>
+      `;
+      openFormModal(item ? `Edit Garage Record: ${item.ID}` : "Record Garage Repair", html);
+    }
+
+    function calcGarageModalTotal() {
+      const qty = parseFloat(document.getElementById("g_qty").value) || 0;
+      const price = parseFloat(document.getElementById("g_price").value) || 0;
+      const curr = document.getElementById("g_curr").value;
+      const rate = parseFloat(document.getElementById("g_rate").value) || 1380;
+      let totalUSD = qty * price;
+      if (curr === "RWF") totalUSD = (qty * price) / (rate || 1380);
+      document.getElementById("g_total").value = totalUSD.toFixed(2);
+    }
+
+    window.onEditTriggered = function(sheetName, item) {
+      if (sheetName === 'Garage') openGarageFormModal(item);
+    };
+
+    async function submitGarageForm(e) {
+      e.preventDefault();
+      const editId = document.getElementById("g_edit_id").value;
+      const data = {
+        ID: editId || ("GAR-" + Date.now().toString().slice(-4)),
+        Date: document.getElementById("g_date").value,
+        Item: document.getElementById("g_item").value,
+        Description: document.getElementById("g_desc").value,
+        Qty: document.getElementById("g_qty").value,
+        Currency: document.getElementById("g_curr").value,
+        Price: document.getElementById("g_price").value,
+        ExchangeRate: document.getElementById("g_rate").value,
+        TotalUSD: document.getElementById("g_total").value,
+        ShopRef: document.getElementById("g_shop").value,
+        TruckID: document.getElementById("g_truck").value,
+        TripID: document.getElementById("g_trip").value // Added comma here
+      };
+      await sendToServer("Garage", editId ? "update" : "add", data);
+    }
+
+    fetchDatabase();
+  </script>
+</body>
+</html>

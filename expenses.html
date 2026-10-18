@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FleetDesk - Expenses & Reports</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen overflow-hidden">
+  <div id="sidebarContainer"></div>
+  <main class="flex-1 flex flex-col h-screen overflow-y-auto">
+    <header class="bg-white border-b px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+      <h1 class="text-xl font-bold text-gray-800">Expenses & Reports</h1>
+      <button onclick="fetchDatabase(true)" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm transition">🔄 Sync Data</button>
+    </header>
+    <div class="p-6 space-y-6" id="pageContent">Loading...</div>
+  </main>
+  <script>
+    document.getElementById("sidebarContainer").innerHTML = renderSidebar("Expenses");
+
+    window.onDataLoaded = function(db) {
+      const explicitExpenses = db.Expenses || [];
+      const garageList = db.Garage || [];
+      const combinations = db.Combinations || [];
+      const trucks = db.Trucks || [];
+      const trailers = db.Trailers || [];
+
+      // Transform garage records into expense format so they appear seamlessly in the table
+      const garageExpenses = garageList.map(g => {
+        const combination = combinations.find(c => String(c.ID) === String(g.TruckID) || String(c.TruckID) === String(g.TruckID));
+        let vehicleStr = g.TruckID || 'General';
+        if (combination) {
+          const t = trucks.find(tr => String(tr.ID) === String(combination.TruckID) || String(tr.PlateNumber) === String(combination.TruckID));
+          const tr = trailers.find(trl => String(trl.ID) === String(combination.TrailerID) || String(trl.PlateNumber) === String(combination.TrailerID));
+          const tPlate = t ? (t.PlateNumber || t.Registration || t.ID) : combination.TruckID;
+          const trPlate = tr ? (tr.PlateNumber || tr.Registration || tr.ID) : 'No Trailer';
+          vehicleStr = `${tPlate}/${trPlate}`;
+        }
+
+        return {
+          ID: g.ID,
+          Category: `Garage Repair (${g.Item || 'Part'})`,
+          ContainerID: `Vehicle: ${vehicleStr}`,
+          AmountUSD: g.TotalUSD || g.PriceUSD || 0,
+          Date: g.Date || '',
+          Description: g.Description || '',
+          ShopRef: g.ShopRef || '',
+          IsGarage: true
+        };
+      });
+
+      // Combine both regular expenses and garage repair expenses
+      const allExpenses = [...explicitExpenses, ...garageExpenses];
+      const columns = ["ID", "Category", "Linked Ref", "Amount (USD)", "Date", "Description", "Shop Ref", "Actions"];
+
+      let tableRows = "";
+      allExpenses.forEach(e => {
+        tableRows += `
+          <tr class="hover:bg-gray-50 border-b">
+            <td class="p-3 text-xs text-gray-500">${e.ID || ''}</td>
+            <td class="p-3 font-semibold text-gray-800">${e.Category || ''} ${e.IsGarage ? '<span class="bg-indigo-100 text-indigo-800 text-[10px] px-1.5 py-0.5 rounded ml-1">Garage</span>' : ''}</td>
+            <td class="p-3 text-xs text-indigo-600 font-medium">${e.ContainerID || 'General'}</td>
+            <td class="p-3 text-red-600 font-semibold">$${Number(e.AmountUSD || e.TotalUSD || 0).toFixed(2)}</td>
+            <td class="p-3 text-xs">${e.Date || ''}</td>
+            <td class="p-3 text-xs text-gray-600">${e.Description || ''}</td>
+            <td class="p-3 text-xs text-gray-600">${e.ShopRef || ''}</td>
+            <td class="p-3 text-center">
+              ${e.IsGarage ? '<span class="text-xs text-gray-400 italic">Managed in Garage</span>' : renderActionCell('Expenses', e.ID)}
+            </td>
+          </tr>
+        `;
+      });
+
+      document.getElementById("pageContent").innerHTML = `
+        <div class="flex justify-between items-center mb-2">
+          <button onclick="openExpenseFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
+            ➕ Record Expense
+          </button>
+          <button onclick="exportCSVData('Expenses', allExpenses)" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-700 transition">📥 Download CSV</button>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div class="p-4 border-b flex flex-col md:flex-row justify-between items-center gap-3">
+            <input type="text" placeholder="🔍 Search expenses..." oninput="filterTable(event, 'table_Expenses')" class="border px-3 py-1.5 rounded text-sm w-full md:w-72 outline-none">
+            <div class="flex items-center gap-2">
+              ${renderColumnVisibilityMenu('table_Expenses', columns)}
+              <button onclick="exportPDFTable('Expenses', allExpenses)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 PDF</button>
+            </div>
+          </div>
+          <div class="overflow-x-auto min-h-[300px]">
+            <table class="w-full text-left border-collapse text-sm whitespace-nowrap" id="table_Expenses">
+              <thead>
+                <tr class="bg-gray-50 text-gray-500 text-xs">
+                  <th class="p-3">ID</th>
+                  <th class="p-3">Category</th>
+                  <th class="p-3">Linked Ref</th>
+                  <th class="p-3">Amount (USD)</th>
+                  <th class="p-3">Date</th>
+                  <th class="p-3">Description</th>
+                  <th class="p-3">Shop Ref</th>
+                  <th class="p-3 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+                ${tableRows || '<tr><td colspan="8" class="p-4 text-center text-gray-400">No expense records found.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    };
+
+    function openExpenseFormModal(item = null) {
+      let containerOptions = '<option value="General">General Company Expense</option>';
+      (globalData.Containers || []).forEach(c => {
+        const selected = item && item.ContainerID === c.ID ? 'selected' : '';
+        containerOptions += `<option value="${c.ID}" ${selected}>Container ${c.ContainerNo}</option>`;
+      });
+
+      const html = `
+        <form onsubmit="submitExpenseForm(event)" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <input type="hidden" id="e_edit_id" value="${item ? item.ID : ''}">
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Category</label>
+            <input type="text" id="e_cat" value="${item ? item.Category || '' : ''}" placeholder="e.g. Fuel, Toll, Maintenance" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Container Link</label>
+            <select id="e_cont" class="border p-2 rounded w-full text-sm outline-none bg-white">${containerOptions}</select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Amount (USD)</label>
+            <input type="number" step="0.01" id="e_amt" value="${item ? item.AmountUSD || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1">Date</label>
+            <input type="date" id="e_date" value="${item ? item.Date || '' : ''}" class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div class="md:col-span-2">
+            <label class="text-xs text-gray-500 block mb-1">Description</label>
+            <input type="text" id="e_desc" value="${item ? item.Description || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div class="md:col-span-2">
+            <label class="text-xs text-gray-500 block mb-1">Shop / Vendor Ref</label>
+            <input type="text" id="e_shop" value="${item ? item.ShopRef || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <button type="submit" class="md:col-span-2 bg-blue-600 text-white py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition">
+            ${item ? 'Update Expense' : 'Save Expense'}
+          </button>
+        </form>
+      `;
+      openFormModal(item ? `Edit Expense: ${item.ID}` : "Record Expense", html);
+    }
+
+    window.onEditTriggered = function(sheetName, item) {
+      if (sheetName === 'Expenses') openExpenseFormModal(item);
+    };
+
+    async function submitExpenseForm(e) {
+      e.preventDefault();
+      const editId = document.getElementById("e_edit_id").value;
+      const data = {
+        ID: editId || ("EXP-" + Date.now().toString().slice(-4)),
+        Category: document.getElementById("e_cat").value,
+        ContainerID: document.getElementById("e_cont").value,
+        AmountUSD: document.getElementById("e_amt").value,
+        Date: document.getElementById("e_date").value,
+        Description: document.getElementById("e_desc").value,
+        ShopRef: document.getElementById("e_shop").value
+      };
+      await sendToServer("Expenses", editId ? "update" : "add", data);
+    }
+
+    fetchDatabase();
+  </script>
+</body>
+</html>

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FleetDesk - Contacts Directory</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen overflow-hidden">
+  <div id="sidebarContainer"></div>
+  <main class="flex-1 flex flex-col h-screen overflow-y-auto">
+    <header class="bg-white border-b px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+      <h1 class="text-xl font-bold text-gray-800">Contacts Directory</h1>
+      <button onclick="fetchDatabase()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm transition">🔄 Sync Data</button>
+    </header>
+    <div class="p-6 space-y-6" id="pageContent">Loading...</div>
+  </main>
+  <script>
+    document.getElementById("sidebarContainer").innerHTML = renderSidebar("Contacts");
+
+    window.onDataLoaded = function(db) {
+      const contacts = db.Contacts || [];
+      const columns = ["ID", "Name", "Tel", "Address", "Email", "Actions"];
+
+      document.getElementById("pageContent").innerHTML = `
+        <div class="mb-2">
+          <button onclick="openContactFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
+            ➕ Add New Contact
+          </button>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div class="p-4 border-b flex flex-col md:flex-row justify-between items-center gap-3">
+            <input type="text" placeholder="🔍 Search contacts..." oninput="filterTable(event, 'table_Contacts')" class="border px-3 py-1.5 rounded text-sm w-full md:w-72 outline-none">
+            <div class="flex items-center gap-2">
+              ${renderColumnVisibilityMenu('table_Contacts', columns)}
+              <button onclick="exportPDFTable('Contacts', globalData.Contacts)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm">📥 PDF</button>
+              <button onclick="exportCSVData('Contacts', globalData.Contacts)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm">📥 CSV</button>
+            </div>
+          </div>
+          <table class="w-full text-left border-collapse text-sm" id="table_Contacts">
+            <thead>
+              <tr class="bg-gray-50 text-gray-500">
+                <th class="p-3">ID</th><th class="p-3">Name</th><th class="p-3">Tel</th><th class="p-3">Address</th><th class="p-3">Email</th><th class="p-3 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              ${contacts.map(c => `
+                <tr>
+                  <td class="p-3">${c.ID || ''}</td>
+                  <td class="p-3 font-semibold">${c.Name || ''}</td>
+                  <td class="p-3">${c.Tel || ''}</td>
+                  <td class="p-3">${c.Address || ''}</td>
+                  <td class="p-3">${c.Email || ''}</td>
+                  <td class="p-3 text-center">${renderActionCell('Contacts', c.ID)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    };
+
+    function openContactFormModal(item = null) {
+      const html = `
+        <form onsubmit="submitContactForm(event)" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <input type="hidden" id="co_edit_id" value="${item ? item.ID : ''}">
+          <div class="md:col-span-2"><label class="text-xs text-gray-500 block">Full Name / Company</label><input type="text" id="co_name" value="${item ? item.Name || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <div><label class="text-xs text-gray-500 block">Telephone</label><input type="text" id="co_tel" value="${item ? item.Tel || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <div><label class="text-xs text-gray-500 block">Email</label><input type="email" id="co_email" value="${item ? item.Email || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <div class="md:col-span-2"><label class="text-xs text-gray-500 block">Address</label><input type="text" id="co_addr" value="${item ? item.Address || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <button type="submit" class="md:col-span-2 bg-blue-600 text-white py-2.5 rounded font-semibold hover:bg-blue-700 transition">${item ? 'Update Contact' : 'Save Contact'}</button>
+        </form>
+      `;
+      openFormModal(item ? `Edit Contact: ${item.ID}` : "Add New Contact", html);
+    }
+
+    window.onEditTriggered = function(sheetName, item) {
+      if (sheetName === 'Contacts') openContactFormModal(item);
+    };
+
+    async function submitContactForm(e) {
+      e.preventDefault();
+      const editId = document.getElementById("co_edit_id").value;
+      const data = {
+        ID: editId || undefined,
+        Name: document.getElementById("co_name").value,
+        Tel: document.getElementById("co_tel").value,
+        Address: document.getElementById("co_addr").value,
+        Email: document.getElementById("co_email").value
+      };
+      await sendToServer("Contacts", editId ? "update" : "add", data);
+    }
+
+    fetchDatabase();
+  </script>
+</body>
+</html>

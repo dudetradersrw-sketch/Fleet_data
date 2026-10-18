@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FleetDesk - User Management & Access Control</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen overflow-hidden">
+  <div id="sidebarContainer"></div>
+  <main class="flex-1 flex flex-col h-screen overflow-y-auto">
+    <header class="bg-white border-b px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+      <h1 class="text-xl font-bold text-gray-800">User Management & Granular Permissions</h1>
+      <div id="headerCenterBadge"></div>
+      <button onclick="fetchDatabase(true)" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm transition">🔄 Sync</button>
+    </header>
+    <div class="p-6 space-y-6" id="pageContent">Loading...</div>
+  </main>
+
+  <script>
+    document.getElementById("sidebarContainer").innerHTML = renderSidebar("Users");
+    document.getElementById("headerCenterBadge").innerHTML = renderUserHeaderBadge();
+
+    const ALL_MODULES = [
+      "Dashboard", "Clearing", "Trucks", "Trailers", "Combinations", "Drivers",  
+      "Garage", "Trips", "Monitoring & Alerts", "Containers",  
+      "Cashbook", "Invoices", "Expenses", "Contacts"
+    ];
+
+    window.onDataLoaded = function(db) {
+      const currentUser = checkAuth();
+      if (!currentUser || (currentUser.Username !== "admin" && !currentUser.IsMasterAdmin)) {
+        document.getElementById("pageContent").innerHTML = `<div class="p-6 bg-red-50 text-red-700 rounded-xl border border-red-200 font-semibold">Access Denied: Only Master Admin can manage users and privileges.</div>`;
+        return;
+      }
+
+      const users = db.Users || [];
+      let userRows = "";
+      
+      users.forEach(u => {
+        let perms = [];
+        try {
+          perms = typeof u.Permissions === 'string' ? JSON.parse(u.Permissions || '[]') : (u.Permissions || []);
+        } catch(e) { perms = []; }
+
+        userRows += `
+          <tr class="border-b hover:bg-gray-50">
+            <td class="p-3 font-semibold text-gray-800">${u.Name || u.Username}</td>
+            <td class="p-3 text-blue-600">${u.Username}</td>
+            <td class="p-3"><span class="bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded text-xs font-semibold">${u.Category || 'Standard'}</span></td>
+            <td class="p-3 text-xs text-gray-500 max-w-xs truncate" title="${perms.join(', ')}">${perms.join(', ')}</td>
+            <td class="p-3 text-center flex items-center justify-center gap-2">
+              <button onclick="openUserFormModal('${u.ID}')" class="bg-amber-500 hover:bg-amber-600 text-white px-2.5 py-1 rounded text-xs font-semibold transition">✏️ Edit</button>
+              <button onclick="deleteUser('${u.ID}')" class="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded text-xs font-semibold transition">🗑️ Delete</button>
+            </td>
+          </tr>
+        `;
+      });
+
+      document.getElementById("pageContent").innerHTML = `
+        <div class="mb-4">
+          <button onclick="openUserFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
+            ➕ Create New User
+          </button>
+        </div>
+
+        <!-- Existing Users List -->
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div class="p-4 border-b font-bold text-gray-700">Active System Users & Granular Permissions</div>
+          <table class="w-full text-left text-sm">
+            <thead>
+              <tr class="bg-gray-50 text-gray-500">
+                <th class="p-3">Name</th>
+                <th class="p-3">Username</th>
+                <th class="p-3">Category</th>
+                <th class="p-3">Configured Permissions</th>
+                <th class="p-3 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody>${userRows || '<tr><td colspan="5" class="p-4 text-center text-gray-400">No users found.</td></tr>'}</tbody>
+          </table>
+        </div>
+      `;
+    };
+
+    function openUserFormModal(userId = null) {
+      const users = globalData.Users || [];
+      const user = userId ? users.find(u => String(u.ID) === String(userId)) : null;
+      
+      let existingPerms = [];
+      if (user) {
+        try {
+          existingPerms = typeof user.Permissions === 'string' ? JSON.parse(user.Permissions || '[]') : (user.Permissions || []);
+        } catch(e) { existingPerms = []; }
+      } else {
+        // Default all permissions enabled for new user
+        ALL_MODULES.forEach(m => {
+          existingPerms.push(`${m}:View`, `${m}:Add`, `${m}:Edit`, `${m}:Delete`);
+        });
+      }
+
+      const categories = ["Manager", "Accountant", "Operations Clerk", "Garage Supervisor", "Administrator"];
+      let categoryOptions = categories.map(cat => `<option value="${cat}" ${user && user.Category === cat ? 'selected' : ''}>${cat}</option>`).join('');
+
+      let matrixRows = "";
+      ALL_MODULES.forEach(m => {
+        const canView = existingPerms.includes(`${m}:View`) || existingPerms.includes(m) || existingPerms.includes("All");
+        const canAdd = existingPerms.includes(`${m}:Add`) || existingPerms.includes("All");
+        const canEdit = existingPerms.includes(`${m}:Edit`) || existingPerms.includes("All");
+        const canDelete = existingPerms.includes(`${m}:Delete`) || existingPerms.includes("All");
+
+        matrixRows += `
+          <tr class="border-b hover:bg-gray-50">
+            <td class="p-2 font-medium text-gray-800">${m}</td>
+            <td class="p-2 text-center"><input type="checkbox" name="perm" value="${m}:View" ${canView ? 'checked' : ''} class="rounded text-blue-600"></td>
+            <td class="p-2 text-center"><input type="checkbox" name="perm" value="${m}:Add" ${canAdd ? 'checked' : ''} class="rounded text-emerald-600"></td>
+            <td class="p-2 text-center"><input type="checkbox" name="perm" value="${m}:Edit" ${canEdit ? 'checked' : ''} class="rounded text-amber-600"></td>
+            <td class="p-2 text-center"><input type="checkbox" name="perm" value="${m}:Delete" ${canDelete ? 'checked' : ''} class="rounded text-red-600"></td>
+          </tr>
+        `;
+      });
+
+      const html = `
+        <form onsubmit="submitUserForm(event)" class="space-y-4">
+          <input type="hidden" id="u_edit_id" value="${user ? user.ID : ''}">
+          
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Full Name</label>
+              <input type="text" id="u_name" value="${user ? user.Name || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Username</label>
+              <input type="text" id="u_user" value="${user ? user.Username || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Password</label>
+              <input type="text" id="u_pass" value="${user ? user.Password || '' : 'Fleet2026@'}" required class="border p-2 rounded w-full text-sm outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">User Category</label>
+              <select id="u_cat" class="border p-2 rounded w-full text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                ${categoryOptions}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="text-xs font-bold text-gray-700 block mb-1">Granular Action Permissions Matrix</label>
+            <div class="bg-gray-50 p-2 rounded-lg border max-h-64 overflow-y-auto">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="text-gray-500 border-b">
+                    <th class="p-2 text-left">Module / System Function</th>
+                    <th class="p-2 text-center">👁️ View</th>
+                    <th class="p-2 text-center">➕ Add</th>
+                    <th class="p-2 text-center">✏️ Edit</th>
+                    <th class="p-2 text-center">🗑️ Delete</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${matrixRows}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <button type="submit" class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition">
+            ${user ? 'Update User Account' : 'Create User Account'}
+          </button>
+        </form>
+      `;
+
+      openFormModal(user ? `Edit User & Permissions: ${user.Username}` : "Create New User with Privileges", html);
+    }
+
+    async function submitUserForm(e) {
+      e.preventDefault();
+      const editId = document.getElementById("u_edit_id").value;
+      const perms = Array.from(document.querySelectorAll('input[name="perm"]:checked')).map(cb => cb.value);
+      
+      const data = {
+        ID: editId || ("USR-" + Date.now().toString().slice(-4)),
+        Name: document.getElementById("u_name").value,
+        Username: document.getElementById("u_user").value,
+        Password: document.getElementById("u_pass").value,
+        Category: document.getElementById("u_cat").value,
+        Permissions: perms
+      };
+
+      await sendToServer("Users", editId ? "update" : "add", data);
+    }
+
+    async function deleteUser(id) {
+      if (confirm("Are you sure you want to remove this user?")) {
+        await sendToServer("Users", "delete", { id });
+      }
+    }
+
+    fetchDatabase();
+  </script>
+</body>
+</html>

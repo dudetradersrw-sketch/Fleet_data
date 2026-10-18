@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FleetDesk - Login</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 font-sans flex items-center justify-center h-screen">
+  <div class="bg-white rounded-2xl max-w-md w-full p-8 shadow-2xl relative">
+    <div class="text-center mb-6">
+      <div class="bg-blue-600 text-white font-bold p-3 rounded-2xl text-2xl inline-block mb-2">🚚</div>
+      <h1 class="text-2xl font-bold text-gray-800">FleetDesk Login</h1>
+      <p class="text-xs text-gray-400">Enter your credentials to access operations</p>
+    </div>
+
+    <form onsubmit="handleLogin(event)" class="space-y-4">
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1">Username</label>
+        <input type="text" id="loginUser" required class="border p-3 rounded-xl w-full text-sm outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter username">
+      </div>
+
+      <div>
+        <label class="text-xs font-semibold text-gray-600 block mb-1">Password</label>
+        <input type="password" id="loginPass" required class="border p-3 rounded-xl w-full text-sm outline-none focus:ring-2 focus:ring-blue-500" placeholder="••••••••">
+      </div>
+
+      <button type="submit" id="loginBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition shadow-lg">
+        Sign In
+      </button>
+    </form>
+    
+    <div id="loginError" class="mt-4 text-center text-xs text-red-600 font-semibold hidden"></div>
+  </div>
+
+  <script>
+    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyABP4xsGbLluzADJhotyT5e4SSnp_WYC2DlfpMC56PJx8MQaN-IcHk_bfbZAocVMsb_Q/exec";
+
+    function handleLogin(e) {
+      e.preventDefault();
+      const usernameInput = document.getElementById("loginUser").value.trim();
+      const passwordInput = document.getElementById("loginPass").value.trim();
+      const errorDiv = document.getElementById("loginError");
+      const btn = document.getElementById("loginBtn");
+
+      errorDiv.classList.add("hidden");
+      btn.innerText = "Authenticating...";
+      btn.disabled = true;
+
+      // Master Admin Hardcoded Fallback Check
+      if (usernameInput === "admin" && passwordInput === "admin@ndikumwe.com") {
+        const adminUser = {
+          ID: "ADMIN-01",
+          Name: "Master Admin",
+          Username: "admin",
+          Category: "Administrator",
+          IsMasterAdmin: true,
+          Permissions: ["All"]
+        };
+        sessionStorage.setItem("fleetDesk_currentUser", JSON.stringify(adminUser));
+        window.location.href = "index.html";
+        return;
+      }
+
+      // Fetch users database via JSONP to check credentials securely without CORS blocks
+      const callbackName = 'jsonp_login_' + Math.round(100000 * Math.random());
+      window[callbackName] = function(parsedData) {
+        delete window[callbackName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+
+        const users = parsedData.Users || [];
+        const matchedUser = users.find(u => 
+          String(u.Username).trim().toLowerCase() === usernameInput.toLowerCase() && 
+          String(u.Password).trim() === passwordInput
+        );
+
+        if (matchedUser) {
+          // Parse permissions if stored as JSON string
+          let perms = [];
+          try {
+            perms = typeof matchedUser.Permissions === 'string' ? JSON.parse(matchedUser.Permissions || '[]') : (matchedUser.Permissions || []);
+          } catch(err) {
+            perms = [];
+          }
+
+          const userSession = {
+            ID: matchedUser.ID,
+            Name: matchedUser.Name || matchedUser.Username,
+            Username: matchedUser.Username,
+            Category: matchedUser.Category || "Standard User",
+            IsMasterAdmin: false,
+            Permissions: perms
+          };
+
+          sessionStorage.setItem("fleetDesk_currentUser", JSON.stringify(userSession));
+          window.location.href = "index.html";
+        } else {
+          btn.innerText = "Sign In";
+          btn.disabled = false;
+          errorDiv.innerText = "Invalid username or password. Please try again.";
+          errorDiv.classList.remove("hidden");
+        }
+      };
+
+      const script = document.createElement('script');
+      script.src = `${SCRIPT_URL}?callback=${callbackName}`;
+      script.onerror = function() {
+        delete window[callbackName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+        btn.innerText = "Sign In";
+        btn.disabled = false;
+        errorDiv.innerText = "Login connection error: Failed to reach Google Sheets backend.";
+        errorDiv.classList.remove("hidden");
+      };
+      document.body.appendChild(script);
+    }
+  </script>
+</body>
+</html>

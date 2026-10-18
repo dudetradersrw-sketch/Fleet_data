@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FleetDesk - Trailers Management</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="app.js"></script>
+</head>
+<body class="bg-gray-100 font-sans flex h-screen overflow-hidden">
+  <div id="sidebarContainer"></div>
+  <main class="flex-1 flex flex-col h-screen overflow-y-auto">
+    <header class="bg-white border-b px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+      <h1 class="text-xl font-bold text-gray-800">Trailers Management</h1>
+      <button onclick="fetchDatabase()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm transition">🔄 Sync Data</button>
+    </header>
+    <div class="p-6 space-y-6" id="pageContent">Loading...</div>
+  </main>
+  <script>
+    document.getElementById("sidebarContainer").innerHTML = renderSidebar("Trailers");
+
+    window.onDataLoaded = function(db) {
+      const trailers = db.Trailers || [];
+      const columns = ["ID", "Plate Number", "Owner", "Chassis Number", "Actions"];
+
+      document.getElementById("pageContent").innerHTML = `
+        <div class="mb-2">
+          <button onclick="openTrailerFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
+            ➕ Add New Trailer
+          </button>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div class="p-4 border-b flex flex-col md:flex-row justify-between items-center gap-3">
+            <input type="text" placeholder="🔍 Search trailers..." oninput="filterTable(event, 'table_Trailers')" class="border px-3 py-1.5 rounded text-sm w-full md:w-72 outline-none">
+            <div class="flex items-center gap-2">
+              ${renderColumnVisibilityMenu('table_Trailers', columns)}
+              <button onclick="exportPDFTable('Trailers', globalData.Trailers)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm">📥 PDF</button>
+              <button onclick="exportCSVData('Trailers', globalData.Trailers)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm">📥 CSV</button>
+            </div>
+          </div>
+          <table class="w-full text-left border-collapse text-sm" id="table_Trailers">
+            <thead>
+              <tr class="bg-gray-50 text-gray-500">
+                <th class="p-3">ID</th><th class="p-3">Plate Number</th><th class="p-3">Owner</th><th class="p-3">Chassis Number</th><th class="p-3 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              ${trailers.map(tr => `
+                <tr>
+                  <td class="p-3">${tr.ID || ''}</td>
+                  <td class="p-3 font-semibold">${tr.PlateNumber || ''}</td>
+                  <td class="p-3">${tr.Owner || ''}</td>
+                  <td class="p-3">${tr.ChassisNumber || ''}</td>
+                  <td class="p-3 text-center">${renderActionCell('Trailers', tr.ID)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    };
+
+    function openTrailerFormModal(item = null) {
+      const contactsOptions = (globalData.Contacts || []).map(c => `<option value="${c.Name}" ${item && item.Owner === c.Name ? 'selected' : ''}>${c.Name}</option>`).join('');
+      const html = `
+        <form onsubmit="submitTrailerForm(event)" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <input type="hidden" id="tr_edit_id" value="${item ? item.ID : ''}">
+          <div><label class="text-xs text-gray-500 block">Trailer Plate No</label><input type="text" id="tr_plate" value="${item ? item.PlateNumber || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <div><label class="text-xs text-gray-500 block">Owner</label><select id="tr_owner" required class="border p-2 rounded w-full"><option value="">Select Owner</option>${contactsOptions}</select></div>
+          <div class="md:col-span-2"><label class="text-xs text-gray-500 block">Chassis Number</label><input type="text" id="tr_chassis" value="${item ? item.ChassisNumber || '' : ''}" required class="border p-2 rounded w-full"></div>
+          <button type="submit" class="md:col-span-2 bg-blue-600 text-white py-2.5 rounded font-semibold hover:bg-blue-700 transition">${item ? 'Update Trailer' : 'Save Trailer'}</button>
+        </form>
+      `;
+      openFormModal(item ? `Edit Trailer: ${item.ID}` : "Register New Trailer", html);
+    }
+
+    window.onEditTriggered = function(sheetName, item) {
+      if (sheetName === 'Trailers') openTrailerFormModal(item);
+    };
+
+    async function submitTrailerForm(e) {
+      e.preventDefault();
+      const editId = document.getElementById("tr_edit_id").value;
+      const data = {
+        ID: editId || undefined,
+        PlateNumber: document.getElementById("tr_plate").value,
+        Owner: document.getElementById("tr_owner").value,
+        ChassisNumber: document.getElementById("tr_chassis").value
+      };
+      await sendToServer("Trailers", editId ? "update" : "add", data);
+    }
+
+    fetchDatabase();
+  </script>
+</body>
+</html>
