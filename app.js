@@ -42,71 +42,55 @@ function saveSystemTheme(themeKey) {
 }
 
 // Robust JSONP fetch function that bypasses browser CORS locks completely
-async function fetchDatabase(forceRefresh = false) {
-  try {
-    const cachedData = sessionStorage.getItem("fleetDesk_db");
-    if (!forceRefresh && cachedData) {
-      console.log("Loading data from session cache...");
-      globalData = JSON.parse(cachedData);
-      
-      if (!globalData.Trips) globalData.Trips = [];
+// --- JSONP DATABASE FETCH (Bypasses Netlify CORS restrictions) ---
+let globalData = {};
 
-      if (typeof window.onDataLoaded === "function") {
-        window.onDataLoaded(globalData);
-      }
-      return;
-    }
-
-    console.log("Fetching fresh data via JSONP...");
-    await new Promise((resolve, reject) => {
-      const callbackName = 'jsonp_callback_' + Math.round(100000 * Math.random());
-      window[callbackName] = function(parsedData) {
-        delete window[callbackName];
-        if (script.parentNode) script.parentNode.removeChild(script);
-        
-        globalData = {};
-        Object.keys(parsedData).forEach(sheet => {
-          globalData[sheet] = Array.isArray(parsedData[sheet]) ? [...parsedData[sheet]].reverse() : [];
-        });
-        
-        if (!globalData.Trips) globalData.Trips = [];
-
-        sessionStorage.setItem("fleetDesk_db", JSON.stringify(globalData));
-
-        if (typeof window.onDataLoaded === "function") {
-          window.onDataLoaded(globalData);
-        }
-        resolve();
-      };
-
-      const script = document.createElement('script');
-      script.src = `${SCRIPT_URL}?callback=${callbackName}&t=${Date.now()}`;
-      script.onerror = function(err) {
-        delete window[callbackName];
-        if (script.parentNode) script.parentNode.removeChild(script);
-        reject(err);
-      };
-      document.body.appendChild(script);
-    });
-
-  } catch (err) {
-    console.warn("JSONP fetch failed, falling back to local cache...", err);
-    const fallbackCache = sessionStorage.getItem("fleetDesk_db");
-    if (fallbackCache) {
-      globalData = JSON.parse(fallbackCache);
-      if (!globalData.Trips) globalData.Trips = [];
-      if (typeof window.onDataLoaded === "function") {
-        window.onDataLoaded(globalData);
-      }
-      showNotification("Running on cached local data.", "error");
-    } else {
-      globalData = { Trucks: [], Drivers: [], Containers: [], Invoices: [], Expenses: [], Users: [], Garage: [], Monitoring: [], Trailers: [], Combinations: [], Contacts: [], Cashbook: [], CashAccounts: [], Trips: [], Clearing: [] };
-      if (typeof window.onDataLoaded === "function") {
-        window.onDataLoaded(globalData);
-      }
-      showNotification("Unable to connect to Google Sheets backend.", "error");
-    }
+function fetchDatabase(forceRefresh = false) {
+  // If we already have cached data and aren't forcing a refresh, use it
+  if (!forceRefresh && window.cachedFleetData) {
+    globalData = window.cachedFleetData;
+    if (typeof window.onDataLoaded === 'function') window.onDataLoaded(globalData);
+    return;
   }
+
+  // Unique callback name to avoid collisions
+  const callbackName = 'jsonp_callback_' + Math.round(100000 * Math.random());
+  
+  window[callbackName] = function(data) {
+    // Cleanup script tag
+    delete window[callbackName];
+    const scriptTag = document.getElementById('jsonpScript');
+    if (scriptTag) scriptTag.remove();
+
+    if (data) {
+      globalData = data;
+      window.cachedFleetData = data;
+      if (typeof window.onDataLoaded === 'function') {
+        window.onDataLoaded(data);
+      }
+    } else {
+      showErrorNotification("Failed to parse database response.");
+    }
+  };
+
+  // Inject script tag to bypass CORS
+  const oldScript = document.getElementById('jsonpScript');
+  if (oldScript) oldScript.remove();
+
+  const script = document.createElement('script');
+  script.id = 'jsonpScript';
+  script.src = `${SCRIPT_URL}?callback=${callbackName}`;
+  
+  script.onerror = function() {
+    delete window[callbackName];
+    console.error("JSONP fetch failed, falling back to local cache...");
+    // Fallback if offline or blocked
+    if (typeof window.onDataLoaded === 'function') {
+      window.onDataLoaded(globalData || {});
+    }
+  };
+
+  document.body.appendChild(script);
 }
 
 async function triggerSyncWithLoading() {
