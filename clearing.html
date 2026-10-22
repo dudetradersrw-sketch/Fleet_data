@@ -87,8 +87,6 @@
     </div>
   </div>
 
-
-
 <script>
     if (typeof renderSidebar === 'function') {
       document.getElementById("sidebarContainer").innerHTML = renderSidebar("Clearing");
@@ -412,6 +410,7 @@
       const clearingList = db.Clearing || [];
       const paymentsList = db.ClearingPayments || [];
       const invoicesList = db.ClearingInvoices || [];
+      const extraChargesList = db.ClearingExtraCharges || [];
 
       let totalClearingAndTransport = 0;
       let totalAllExpenses = 0;
@@ -426,12 +425,8 @@
         totalAllExpenses += (clearing + transport + storage + rent + demurrage);
       });
 
-      invoicesList.forEach(function(inv) {
-        if (Array.isArray(inv.ExtraCharges)) {
-          inv.ExtraCharges.forEach(function(ec) {
-            totalAllExpenses += (parseFloat(ec.amount) || 0);
-          });
-        }
+      extraChargesList.forEach(function(ec) {
+        totalAllExpenses += (parseFloat(ec.Amount) || 0);
       });
 
       let totalPaid = paymentsList.reduce(function(sum, p) { return sum + (parseFloat(p.AmountPaid) || 0); }, 0);
@@ -709,17 +704,17 @@
       if (typeof showNotification === 'function') showNotification("Clearing file saved successfully!");
     }
 
-    // --- AGENT & TRANSPORTER INVOICES & PAYMENTS SYSTEM WITH EXTRA CHARGES ---
+    // --- AGENT & TRANSPORTER INVOICES & PAYMENTS SYSTEM WITH DECOUPLED EXTRA CHARGES ---
     function renderInvoicesManagementSection(containerId) {
       const db = globalData || {};
       const allInvoices = db.ClearingInvoices || [];
+      const allExtraCharges = db.ClearingExtraCharges || [];
       const invoices = allInvoices.filter(function(inv) { return String(inv.ClearingID) === String(containerId); });
 
       let totalInvoiced = invoices.reduce(function(sum, inv) {
         let invTotal = parseFloat(inv.Amount) || 0;
-        if (Array.isArray(inv.ExtraCharges)) {
-          inv.ExtraCharges.forEach(function(ec) { invTotal += (parseFloat(ec.amount) || 0); });
-        }
+        const invCharges = allExtraCharges.filter(function(ec) { return String(ec.InvoiceID) === String(inv.ID); });
+        invCharges.forEach(function(ec) { invTotal += (parseFloat(ec.Amount) || 0); });
         return sum + invTotal;
       }, 0);
 
@@ -728,13 +723,14 @@
         if (inv.Status === 'Fully Paid') statusBadge = 'bg-emerald-100 text-emerald-800';
         else if (String(inv.Status || '').indexOf('Part Paid') !== -1) statusBadge = 'bg-blue-100 text-blue-800';
 
+        const invCharges = allExtraCharges.filter(function(ec) { return String(ec.InvoiceID) === String(inv.ID); });
         let extraChargesTotal = 0;
         let extraChargesSummary = '';
-        if (Array.isArray(inv.ExtraCharges) && inv.ExtraCharges.length > 0) {
-          extraChargesSummary = inv.ExtraCharges.map(function(ec) {
-            const amt = parseFloat(ec.amount) || 0;
+        if (invCharges.length > 0) {
+          extraChargesSummary = invCharges.map(function(ec) {
+            const amt = parseFloat(ec.Amount) || 0;
             extraChargesTotal += amt;
-            return '• ' + (ec.type || 'Extra') + ': $' + amt.toFixed(2) + ' (' + (ec.description || 'No desc') + ')';
+            return '• ' + (ec.Type || 'Extra') + ': $' + amt.toFixed(2) + ' (' + (ec.Description || 'No desc') + ')';
           }).join('<br>');
         }
 
@@ -806,30 +802,24 @@
       renderExtraChargesList();
     }
 
-    function updateExtraChargeField(index, field, value) {
-      if (invoiceExtraChargesList[index]) {
-        invoiceExtraChargesList[index][field] = field === 'amount' ? (parseFloat(value) || 0) : value;
-      }
-    }
-
     function renderExtraChargesList() {
       const container = document.getElementById("extra_charges_container");
       if (!container) return;
 
       if (invoiceExtraChargesList.length === 0) {
-        container.innerHTML = '<p class="text-xs text-gray-400 italic">No extra charges added.</p>';
+        container.innerHTML = '<p class="text-xs text-gray-400 italic">No extra charges attached.</p>';
         return;
       }
 
       const chargeTypes = ["Storage", "Demurrage", "Overweight", "Yard Rent", "Escort Fee", "Customs Inspection", "Other Extra Charge"];
 
       container.innerHTML = invoiceExtraChargesList.map(function(charge, idx) {
-        return '<div class="grid grid-cols-1 md:grid-cols-12 gap-2 bg-white p-2 rounded border items-center text-xs">' +
-          '<div class="md:col-span-3"><select onchange="updateExtraChargeField(' + idx + ', \'type\', this.value)" class="border p-1.5 rounded w-full outline-none bg-gray-50">' +
+        return '<div class="grid grid-cols-1 md:grid-cols-12 gap-2 bg-white p-2 rounded border items-center text-xs extra-charge-row">' +
+          '<div class="md:col-span-3"><select class="border p-1.5 rounded w-full outline-none bg-gray-50 ec-type">' +
             chargeTypes.map(function(t) { return '<option value="' + t + '" ' + (charge.type === t ? 'selected' : '') + '>' + t + '</option>'; }).join('') +
           '</select></div>' +
-          '<div class="md:col-span-5"><input type="text" value="' + (charge.description || '') + '" oninput="updateExtraChargeField(' + idx + ', \'description\', this.value)" placeholder="Charge Description / Notes..." class="border p-1.5 rounded w-full outline-none bg-gray-50"></div>' +
-          '<div class="md:col-span-3"><input type="number" step="0.01" value="' + (charge.amount || 0) + '" oninput="updateExtraChargeField(' + idx + ', \'amount\', this.value)" placeholder="Amount ($)" class="border p-1.5 rounded w-full outline-none bg-gray-50 font-semibold text-red-600"></div>' +
+          '<div class="md:col-span-5"><input type="text" value="' + (charge.description || '') + '" placeholder="Charge Description / Notes..." class="border p-1.5 rounded w-full outline-none bg-gray-50 ec-desc"></div>' +
+          '<div class="md:col-span-3"><input type="number" step="0.01" value="' + (charge.amount || 0) + '" placeholder="Amount ($)" class="border p-1.5 rounded w-full outline-none bg-gray-50 font-semibold text-red-600 ec-amt"></div>' +
           '<div class="md:col-span-1 text-right"><button type="button" onclick="removeExtraChargeRow(' + idx + ')" class="bg-red-100 hover:bg-red-200 text-red-700 px-2 py-1 rounded font-bold text-xs">✕</button></div>' +
         '</div>';
       }).join('');
@@ -840,8 +830,15 @@
       itemToEdit = itemToEdit || null;
       const db = globalData || {};
       const clearingList = db.Clearing || [];
+      const allExtraCharges = db.ClearingExtraCharges || [];
 
-      invoiceExtraChargesList = itemToEdit && Array.isArray(itemToEdit.ExtraCharges) ? [...itemToEdit.ExtraCharges] : [];
+      if (itemToEdit) {
+        invoiceExtraChargesList = allExtraCharges.filter(function(ec) { return String(ec.InvoiceID) === String(itemToEdit.ID); }).map(function(ec) {
+          return { type: ec.Type, description: ec.Description, amount: ec.Amount };
+        });
+      } else {
+        invoiceExtraChargesList = [];
+      }
 
       const html = '<form onsubmit="submitInvoiceForm(event)" class="space-y-3 max-h-[75vh] overflow-y-auto px-1">' +
           '<input type="hidden" id="inv_edit_id" value="' + (itemToEdit ? itemToEdit.ID : '') + '">' +
@@ -861,8 +858,8 @@
           '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Base Amount ($)</label><input type="number" step="0.01" id="inv_amount" value="' + (itemToEdit ? itemToEdit.Amount || 0 : '') + '" required class="border p-2 rounded w-full text-sm outline-none"></div>' +
           '<div class="bg-amber-50/70 border border-amber-200 p-3 rounded-lg space-y-2">' +
             '<div class="flex justify-between items-center">' +
-              '<div><span class="text-xs font-bold text-amber-900 block">➕ Add Extra Charges</span><span class="text-[10px] text-amber-700 block">Extra charges attach to this invoice and show in clearing details.</span></div>' +
-              '<button type="button" onclick="addExtraChargeRow()" class="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-1 rounded text-xs font-semibold shadow transition">+ Add Extra Charge</button>' +
+              '<div><span class="text-xs font-bold text-amber-900 block">➕ Attach Extra Charges</span><span class="text-[10px] text-amber-700 block">Extra charges saved to separate ClearingExtraCharges table.</span></div>' +
+              '<button type="button" onclick="addExtraChargeRow()" class="bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-1 rounded text-xs font-semibold shadow transition">+ Add Charge</button>' +
             '</div>' +
             '<div id="extra_charges_container" class="space-y-1.5 pt-1"></div>' +
           '</div>' +
@@ -872,7 +869,7 @@
               '<option value="Fully Paid" ' + (itemToEdit && itemToEdit.Status === 'Fully Paid' ? 'selected' : '') + '>Fully Paid</option>' +
             '</select>' +
           '</div>' +
-          '<button type="submit" class="w-full bg-emerald-600 text-white py-2 rounded-lg font-semibold hover:bg-emerald-700 transition">' + (itemToEdit ? 'Update Invoice' : 'Save Invoice') + '</button>' +
+          '<button type="submit" class="w-full bg-emerald-600 text-white py-2 rounded-lg font-semibold hover:bg-emerald-700 transition">' + (itemToEdit ? 'Update Invoice & Charges' : 'Save Invoice & Charges') + '</button>' +
         '</form>';
 
       if (typeof openFormModal === 'function') {
@@ -890,8 +887,16 @@
 
     async function deleteInvoiceRecord(invId) {
       if (!confirm("Are you sure you want to delete invoice " + invId + "?")) return;
+      
+      // Also delete any extra charges linked to this invoice
+      const db = globalData || {};
+      const linkedCharges = (db.ClearingExtraCharges || []).filter(function(ec) { return String(ec.InvoiceID) === String(invId); });
+      for (const chg of linkedCharges) {
+        await sendToServer("ClearingExtraCharges", "delete", { ID: chg.ID });
+      }
+
       await sendToServer("ClearingInvoices", "delete", { ID: invId });
-      if (typeof showNotification === 'function') showNotification("Invoice deleted.");
+      if (typeof showNotification === 'function') showNotification("Invoice and associated charges deleted.");
       if (currentActiveRecordId) previewClearingDetails(currentActiveRecordId);
       if (!document.getElementById("allInvoicesModal").classList.contains("hidden")) openAllInvoicesModal();
     }
@@ -923,78 +928,67 @@
       e.preventDefault();
       const editId = document.getElementById("inv_edit_id").value;
       const clearingId = document.getElementById("inv_clearingId").value;
+      const invoiceId = editId || ("INV-" + Date.now().toString().slice(-4));
       
       const db = globalData || {};
       const clearingItem = (db.Clearing || []).find(function(x) { return String(x.ID) === String(clearingId); }) || selectedInvoiceClearingItem;
 
-      const data = {
-        ID: editId || ("INV-" + Date.now().toString().slice(-4)),
+      // 1. Read Extra Charges inputs from DOM rows
+      const activeCharges = [];
+      document.querySelectorAll('#extra_charges_container .extra-charge-row').forEach(function(row) {
+        const type = row.querySelector('.ec-type')?.value;
+        const desc = row.querySelector('.ec-desc')?.value || '';
+        const amt = parseFloat(row.querySelector('.ec-amt')?.value) || 0;
+        if (type) {
+          activeCharges.push({ type: type, description: desc, amount: amt });
+        }
+      });
+
+      // 2. Prepare and save Invoice Record
+      const invoiceData = {
+        ID: invoiceId,
         ClearingID: clearingItem ? clearingItem.ID : '',
         ContainerNo: clearingItem ? clearingItem.ContainerNo : '',
         Type: document.getElementById("inv_type").value,
         BeneficiaryName: document.getElementById("inv_beneficiary").value,
         Amount: parseFloat(document.getElementById("inv_amount").value) || 0,
-        ExtraCharges: invoiceExtraChargesList,
         Status: document.getElementById("inv_status").value
       };
 
       if (!globalData.ClearingInvoices) globalData.ClearingInvoices = [];
-      await sendToServer("ClearingInvoices", editId ? "update" : "add", data);
-      if (typeof closeFormModal === 'function') closeFormModal();
-      if (typeof showNotification === 'function') showNotification("Invoice " + (editId ? 'updated' : 'recorded') + " successfully!");
-      if (currentActiveRecordId) previewClearingDetails(currentActiveRecordId);
-      if (!document.getElementById("allInvoicesModal").classList.contains("hidden")) openAllInvoicesModal();
-    }
+      await sendToServer("ClearingInvoices", editId ? "update" : "add", invoiceData);
 
-    function openPaymentModal(invId) {
-      invId = invId || null;
-      let checkedBoxes = [];
-      if (invId) {
-        const singleCb = document.querySelector('.inv-checkbox[value="' + invId + '"]');
-        if (singleCb) checkedBoxes = [singleCb];
-      } else {
-        checkedBoxes = document.querySelectorAll('.inv-checkbox:checked');
+      // 3. Sync Extra Charges to ClearingExtraCharges Table
+      if (!globalData.ClearingExtraCharges) globalData.ClearingExtraCharges = [];
+
+      // Remove previous charges for this invoice if editing
+      if (editId) {
+        const existingCharges = globalData.ClearingExtraCharges.filter(function(c) { return String(c.InvoiceID) === String(editId); });
+        for (const oldChg of existingCharges) {
+          await sendToServer("ClearingExtraCharges", "delete", { ID: oldChg.ID });
+        }
       }
 
-      if (checkedBoxes.length === 0) return alert("Please select at least one invoice to pay.");
+      // Add active charges to ClearingExtraCharges table
+      for (let i = 0; i < activeCharges.length; i++) {
+        const chg = activeCharges[i];
+        const newChargeRecord = {
+          ID: "CHG-" + Date.now().toString().slice(-4) + "-" + i,
+          ClearingID: clearingItem ? clearingItem.ID : '',
+          InvoiceID: invoiceId,
+          ContainerNo: clearingItem ? clearingItem.ContainerNo : '',
+          Type: chg.type,
+          Description: chg.description,
+          Amount: chg.amount,
+          Date: new Date().toISOString().split('T')[0]
+        };
+        await sendToServer("ClearingExtraCharges", "add", newChargeRecord);
+      }
 
-      let totalSelectedAmount = 0;
-      let selectedIds = [];
-      checkedBoxes.forEach(function(cb) {
-        totalSelectedAmount += parseFloat(cb.getAttribute("data-amount")) || 0;
-        selectedIds.push(cb.value);
-      });
-
-      const modalBody = document.getElementById("invoicePaymentBody");
-      modalBody.innerHTML = '<form onsubmit="submitPayment(event, \'' + selectedIds.join(",") + '\')" class="space-y-3">' +
-          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Payment Date</label><input type="date" id="pay_date" required class="border p-2 rounded w-full text-sm outline-none bg-white" value="' + new Date().toISOString().split('T')[0] + '"></div>' +
-          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Total Selected Amount ($)</label><input type="text" readonly value="$' + totalSelectedAmount.toFixed(2) + '" class="border p-2 rounded w-full text-sm bg-gray-100 font-bold text-blue-700"></div>' +
-          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold font-bold text-gray-800">Amount To Pay ($)</label><input type="number" step="0.01" id="pay_amount" value="' + totalSelectedAmount.toFixed(2) + '" required class="border p-2 rounded w-full text-sm outline-none"></div>' +
-          '<button type="submit" class="w-full bg-blue-600 text-white py-2 rounded-lg font-semibold hover:bg-blue-700 transition">Confirm & Pay</button>' +
-        '</form>';
-
-      document.getElementById("invoicePaymentModal").classList.remove("hidden");
-    }
-
-    function closeInvoicePaymentModal() {
-      document.getElementById("invoicePaymentModal").classList.add("hidden");
-    }
-
-    function editPaymentRecord(payId) {
-      const db = globalData || {};
-      const p = (db.ClearingPayments || []).find(function(x) { return String(x.ID) === String(payId); });
-      if (!p) return;
-
-      const modalBody = document.getElementById("invoicePaymentBody");
-      modalBody.innerHTML = '<form onsubmit="submitEditPayment(event, \'' + p.ID + '\')" class="space-y-3">' +
-          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Payment Date</label><input type="date" id="edit_pay_date" value="' + (p.Date || '') + '" required class="border p-2 rounded w-full text-sm outline-none bg-white"></div>' +
-          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Beneficiary Name</label><input type="text" id="edit_pay_ben" value="' + (p.BeneficiaryName || '') + '" required class="border p-2 rounded w-full text-sm outline-none"></div>' +
-          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Amount Paid ($)</label><input type="number" step="0.01" id="edit_pay_amount" value="' + (p.AmountPaid || 0) + '" required class="border p-2 rounded w-full text-sm outline-none"></div>' +
-          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Covered Invoices</label><input type="text" id="edit_pay_invs" value="' + (p.InvoicesPaid || '') + '" class="border p-2 rounded w-full text-sm outline-none"></div>' +
-          '<button type="submit" class="w-full bg-amber-600 text-white py-2 rounded-lg font-semibold hover:bg-amber-700 transition">Update Payment Record</button>' +
-        '</form>';
-
-      document.getElementById("invoicePaymentModal").classList.remove("hidden");
+      if (typeof closeFormModal === 'function') closeFormModal();
+      if (typeof showNotification === 'function') showNotification("Invoice and Extra Charges saved successfully!");
+      if (currentActiveRecordId) previewClearingDetails(currentActiveRecordId);
+      if (!document.getElementById("allInvoicesModal").classList.contains("hidden")) openAllInvoicesModal();
     }
 
     async function deletePaymentRecord(payId) {
@@ -1031,6 +1025,7 @@
 
       if (!globalData.ClearingInvoices) globalData.ClearingInvoices = [];
       if (!globalData.ClearingPayments) globalData.ClearingPayments = [];
+      const allExtraCharges = globalData.ClearingExtraCharges || [];
 
       let remainingPayment = payAmount;
       let beneficiary = "";
@@ -1041,9 +1036,8 @@
           beneficiary = inv.BeneficiaryName;
           
           let invTotal = parseFloat(inv.Amount) || 0;
-          if (Array.isArray(inv.ExtraCharges)) {
-            inv.ExtraCharges.forEach(function(ec) { invTotal += (parseFloat(ec.amount) || 0); });
-          }
+          const invCharges = allExtraCharges.filter(function(ec) { return String(ec.InvoiceID) === String(inv.ID); });
+          invCharges.forEach(function(ec) { invTotal += (parseFloat(ec.Amount) || 0); });
 
           if (remainingPayment >= invTotal) {
             inv.Status = "Fully Paid";
@@ -1114,12 +1108,12 @@
     function openAllInvoicesModal() {
       const db = globalData || {};
       const invoices = db.ClearingInvoices || [];
+      const allExtraCharges = db.ClearingExtraCharges || [];
       
       let totalInvoiced = invoices.reduce(function(sum, inv) {
         let invTotal = parseFloat(inv.Amount) || 0;
-        if (Array.isArray(inv.ExtraCharges)) {
-          inv.ExtraCharges.forEach(function(ec) { invTotal += (parseFloat(ec.amount) || 0); });
-        }
+        const invCharges = allExtraCharges.filter(function(ec) { return String(ec.InvoiceID) === String(inv.ID); });
+        invCharges.forEach(function(ec) { invTotal += (parseFloat(ec.Amount) || 0); });
         return sum + invTotal;
       }, 0);
 
@@ -1128,13 +1122,14 @@
         if (inv.Status === 'Fully Paid') statusBadge = 'bg-emerald-100 text-emerald-800';
         else if (String(inv.Status || '').indexOf('Part Paid') !== -1) statusBadge = 'bg-blue-100 text-blue-800';
 
+        const invCharges = allExtraCharges.filter(function(ec) { return String(ec.InvoiceID) === String(inv.ID); });
         let extraChargesTotal = 0;
         let extraChargesSummary = '';
-        if (Array.isArray(inv.ExtraCharges) && inv.ExtraCharges.length > 0) {
-          extraChargesSummary = inv.ExtraCharges.map(function(ec) {
-            const amt = parseFloat(ec.amount) || 0;
+        if (invCharges.length > 0) {
+          extraChargesSummary = invCharges.map(function(ec) {
+            const amt = parseFloat(ec.Amount) || 0;
             extraChargesTotal += amt;
-            return '• ' + (ec.type || 'Extra') + ': $' + amt.toFixed(2) + ' (' + (ec.description || 'No desc') + ')';
+            return '• ' + (ec.Type || 'Extra') + ': $' + amt.toFixed(2) + ' (' + (ec.Description || 'No desc') + ')';
           }).join('<br>');
         }
 
@@ -1231,17 +1226,15 @@
       if (!item) return alert("Record not found.");
 
       const allInvoices = (globalData.ClearingInvoices || []).filter(function(inv) { return String(inv.ClearingID) === String(id); });
+      const allExtraCharges = (globalData.ClearingExtraCharges || []).filter(function(ec) { return String(ec.ClearingID) === String(id); });
+      
       let totalExtraCharges = 0;
       let extraChargesBreakdownList = [];
 
-      allInvoices.forEach(function(inv) {
-        if (Array.isArray(inv.ExtraCharges)) {
-          inv.ExtraCharges.forEach(function(ec) {
-            const amt = parseFloat(ec.amount) || 0;
-            totalExtraCharges += amt;
-            extraChargesBreakdownList.push('<li><b>' + (ec.type || 'Extra') + ':</b> $' + amt.toFixed(2) + ' - <i>' + (ec.description || 'No description') + '</i> (Inv: ' + inv.ID + ')</li>');
-          });
-        }
+      allExtraCharges.forEach(function(ec) {
+        const amt = parseFloat(ec.Amount) || 0;
+        totalExtraCharges += amt;
+        extraChargesBreakdownList.push('<li><b>' + (ec.Type || 'Extra') + ':</b> $' + amt.toFixed(2) + ' - <i>' + (ec.Description || 'No description') + '</i> (Inv: ' + ec.InvoiceID + ')</li>');
       });
 
       const total = (parseFloat(item.ClearingAmount) || 0) + 
@@ -1336,10 +1329,10 @@
       const pageContent = document.getElementById("pageContent");
       if (pageContent && pageContent.innerHTML.trim() === "Loading...") {
         if (typeof window.onDataLoaded === 'function') {
-          window.onDataLoaded(typeof globalData !== 'undefined' ? globalData : { Clearing: [], ClearingPayments: [], ClearingInvoices: [] });
+          window.onDataLoaded(typeof globalData !== 'undefined' ? globalData : { Clearing: [], ClearingPayments: [], ClearingInvoices: [], ClearingExtraCharges: [] });
         }
       }
     }, 1500);
   </script>
-  </body>
+</body>
 </html>
