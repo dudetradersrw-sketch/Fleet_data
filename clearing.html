@@ -16,22 +16,402 @@
         <button onclick="fetchDatabase(true)" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-lg text-xs transition">🔄 Sync Data</button>
       </div>
     </header>
-    <div class="p-4 space-y-4 flex-1 flex flex-col" id="pageContent">Loading clearing operations...</div>
+    <div class="p-4 space-y-4 flex-1 flex flex-col" id="pageContent">Loading...</div>
   </main>
 
+  <!-- Global Hidden File Input for Multi-File Attachment -->
+  <input type="file" id="globalMultiFileInput" multiple class="hidden" onchange="handleMultiFileSelection(event)">
+
+  <!-- 📂 Dedicated Files Management Modal -->
+  <div id="filesModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden">
+    <div class="bg-white rounded-xl max-w-xl w-full p-6 shadow-xl relative max-h-[90vh] overflow-y-auto">
+      <button onclick="closeFilesModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
+      <h3 id="filesModalTitle" class="text-xl font-bold text-gray-800 mb-2 border-b pb-2">Manage Attachments</h3>
+      <p class="text-xs text-gray-500 mb-4">View, preview, download, or add multiple documents for this clearing file.</p>
+      
+      <div id="filesModalBody" class="space-y-3 mb-6"></div>
+
+      <div class="flex justify-between items-center border-t pt-4">
+        <button onclick="triggerMultiFileInputForExisting()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-semibold shadow transition flex items-center gap-1.5">
+          <span>➕ Add More Files</span>
+        </button>
+        <button onclick="closeFilesModal()" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-semibold hover:bg-gray-300">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 👁️ File Preview Modal -->
+  <div id="filePreviewModal" class="fixed inset-0 bg-black/70 z-50 flex items-center justify-center hidden">
+    <div class="bg-white rounded-xl max-w-4xl w-full p-4 shadow-2xl relative max-h-[95vh] flex flex-col">
+      <div class="flex justify-between items-center border-b pb-2 mb-3">
+        <h3 id="previewFileTitle" class="text-base font-bold text-gray-800 truncate">Document Preview</h3>
+        <button onclick="closeFilePreviewModal()" class="text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
+      </div>
+      <div id="filePreviewBody" class="flex-1 overflow-auto flex items-center justify-center min-h-[400px] bg-gray-50 rounded-lg p-2"></div>
+    </div>
+  </div>
+
+  <!-- 📝 Quick Notes Modal -->
+  <div id="quickNotesModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden">
+    <div class="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl relative max-h-[90vh] overflow-y-auto">
+      <button onclick="closeQuickNotesModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
+      <h3 id="quickNotesTitle" class="text-xl font-bold text-gray-800 mb-2 border-b pb-2">Manage Charge Notes</h3>
+      <div id="quickNotesBody" class="space-y-4 pt-2"></div>
+    </div>
+  </div>
+
+  <!-- 💵 Invoice Payment Modal -->
+  <div id="invoicePaymentModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden">
+    <div class="bg-white rounded-xl max-w-lg w-full p-6 shadow-xl relative max-h-[90vh] overflow-y-auto">
+      <button onclick="closeInvoicePaymentModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
+      <h3 class="text-xl font-bold text-gray-800 mb-2 border-b pb-2">Record Agent / Transporter Payment</h3>
+      <div id="invoicePaymentBody" class="space-y-4 pt-2"></div>
+    </div>
+  </div>
+
+  <!-- 📑 Global All Invoices Modal -->
+  <div id="allInvoicesModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden">
+    <div class="bg-white rounded-xl max-w-5xl w-full p-6 shadow-xl relative max-h-[90vh] overflow-y-auto">
+      <button onclick="closeAllInvoicesModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
+      <h3 class="text-xl font-bold text-gray-800 mb-2 border-b pb-2">All Agent & Transporter Invoices</h3>
+      <div id="allInvoicesModalBody" class="space-y-4 pt-2"></div>
+    </div>
+  </div>
+
+  <!-- 💳 Global All Payments Modal -->
+  <div id="allPaymentsModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden">
+    <div class="bg-white rounded-xl max-w-5xl w-full p-6 shadow-xl relative max-h-[90vh] overflow-y-auto">
+      <button onclick="closeAllPaymentsModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
+      <h3 class="text-xl font-bold text-gray-800 mb-2 border-b pb-2">All Payment Records</h3>
+      <div id="allPaymentsModalBody" class="space-y-4 pt-2"></div>
+    </div>
+  </div>
+
   <script>
-    // Fallback if renderSidebar is missing from app.js
-    if (typeof renderSidebar === 'function') {
-      document.getElementById("sidebarContainer").innerHTML = renderSidebar("Clearing");
-    } else {
-      document.getElementById("sidebarContainer").innerHTML = `<div class="w-64 bg-slate-900 text-white p-4 h-full"><b>FleetDesk</b></div>`;
+    document.getElementById("sidebarContainer").innerHTML = renderSidebar("Clearing");
+
+    let currentActiveRecordId = null;
+    let formModalActiveFiles = [];
+
+    // --- MULTI-FILE ATTACHMENT HANDLERS ---
+    function triggerMultiFileInput() {
+      const input = document.getElementById("globalMultiFileInput");
+      if (input) input.click();
     }
 
+    function triggerMultiFileInputForExisting() {
+      const input = document.getElementById("globalMultiFileInput");
+      if (input) input.click();
+    }
+
+    async function handleMultiFileSelection(event) {
+      const files = event.target.files;
+      if (!files || files.length === 0) return;
+
+      if (typeof formModalActiveFiles !== 'undefined' && document.getElementById("formModal") && !document.getElementById("formModal").classList.contains("hidden")) {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          await processFileIntoArray(file, formModalActiveFiles);
+        }
+        renderFormFilesList();
+        showNotification(`${files.length} file(s) added to form!`);
+        event.target.value = "";
+        return;
+      }
+
+      if (currentActiveRecordId) {
+        const item = (globalData.Clearing || []).find(x => String(x.ID) === String(currentActiveRecordId));
+        if (item) {
+          if (!Array.isArray(item.Attachments)) item.Attachments = [];
+          
+          for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            await processFileIntoArray(file, item.Attachments);
+          }
+          await sendToServer("Clearing", "update", item);
+          showNotification(`${files.length} file(s) attached successfully!`);
+          openFilesModal(currentActiveRecordId);
+        }
+        currentActiveRecordId = null;
+        event.target.value = "";
+      }
+    }
+
+    function processFileIntoArray(file, targetArray) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          targetArray.push({
+            name: file.name,
+            type: file.type,
+            data: e.target.result
+          });
+          resolve();
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function openFilesModal(id) {
+      currentActiveRecordId = id;
+      const item = (globalData.Clearing || []).find(x => String(x.ID) === String(id));
+      if (!item) return alert("Record not found.");
+
+      const attachments = Array.isArray(item.Attachments) ? item.Attachments : (item.AttachmentData ? [{name: item.AttachmentName || 'Document', data: item.AttachmentData}] : []);
+
+      document.getElementById("filesModalTitle").innerText = `Attachments: ${item.ContainerNo}`;
+      const body = document.getElementById("filesModalBody");
+
+      if (attachments.length === 0) {
+        body.innerHTML = `<p class="text-xs text-gray-400 italic text-center py-4">No attachments found for this file.</p>`;
+      } else {
+        body.innerHTML = attachments.map((att, idx) => `
+          <div class="flex items-center justify-between bg-gray-50 p-2.5 rounded-lg border">
+            <span class="text-xs font-semibold text-gray-700 truncate max-w-[200px]">📎 ${att.name}</span>
+            <div class="flex items-center gap-2">
+              <button onclick="previewSingleFile('${att.name}', '${att.data}', '${att.type || ''}')" class="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded text-xs font-medium">Preview</button>
+              <a href="${att.data}" download="${att.name}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded text-xs font-medium">Download</a>
+              <button onclick="removeAttachment('${id}', ${idx})" class="bg-red-100 hover:bg-red-200 text-red-700 px-2.5 py-1 rounded text-xs font-medium">Delete</button>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      document.getElementById("filesModal").classList.remove("hidden");
+    }
+
+    function closeFilesModal() {
+      document.getElementById("filesModal").classList.add("hidden");
+      currentActiveRecordId = null;
+    }
+
+    function previewSingleFile(name, dataUrl, fileType) {
+      document.getElementById("previewFileTitle").innerText = `Preview: ${name}`;
+      const previewBody = document.getElementById("filePreviewBody");
+
+      if (fileType.includes("image") || dataUrl.startsWith("data:image")) {
+        previewBody.innerHTML = `<img src="${dataUrl}" alt="${name}" class="max-h-[75vh] max-w-full rounded-lg shadow object-contain" />`;
+      } else if (fileType.includes("pdf") || dataUrl.startsWith("data:application/pdf")) {
+        previewBody.innerHTML = `<iframe src="${dataUrl}" class="w-full h-[75vh] rounded-lg border"></iframe>`;
+      } else {
+        previewBody.innerHTML = `
+          <div class="text-center py-10 space-y-3">
+            <p class="text-sm text-gray-600">Inline preview is not available for this file type.</p>
+            <a href="${dataUrl}" download="${name}" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-semibold inline-block">Download to View</a>
+          </div>
+        `;
+      }
+
+      document.getElementById("filePreviewModal").classList.remove("hidden");
+    }
+
+    function closeFilePreviewModal() {
+      document.getElementById("filePreviewModal").classList.add("hidden");
+    }
+
+    async function removeAttachment(recordId, index) {
+      if (!confirm("Remove this attachment?")) return;
+      const item = (globalData.Clearing || []).find(x => String(x.ID) === String(recordId));
+      if (item && Array.isArray(item.Attachments)) {
+        item.Attachments.splice(index, 1);
+        await sendToServer("Clearing", "update", item);
+        showNotification("Attachment removed.");
+        openFilesModal(recordId);
+      }
+    }
+
+    // --- QUICK NOTES HELPER & MODAL ---
+    let quickEditNotesList = { storage: [], rent: [], demurrage: [] };
+
+    function openQuickNotesModal(id) {
+      currentActiveRecordId = id;
+      const item = (globalData.Clearing || []).find(x => String(x.ID) === String(id));
+      if (!item) return;
+
+      quickEditNotesList = {
+        storage: Array.isArray(item.StorageNotesList) ? [...item.StorageNotesList] : (item.StorageNotes ? [item.StorageNotes] : []),
+        rent: Array.isArray(item.RentNotesList) ? [...item.RentNotesList] : (item.RentNotes ? [item.RentNotes] : []),
+        demurrage: Array.isArray(item.DemurrageNotesList) ? [...item.DemurrageNotesList] : (item.DemurrageNotes ? [item.DemurrageNotes] : [])
+      };
+
+      document.getElementById("quickNotesTitle").innerText = `Notes & Logs: ${item.ContainerNo}`;
+      renderQuickNotesBody();
+      document.getElementById("quickNotesModal").classList.remove("hidden");
+    }
+
+    function closeQuickNotesModal() {
+      document.getElementById("quickNotesModal").classList.add("hidden");
+      currentActiveRecordId = null;
+    }
+
+    function addQuickNoteEntry(type) {
+      quickEditNotesList[type].push("");
+      renderQuickNotesBody();
+    }
+
+    function removeQuickNoteEntry(type, index) {
+      quickEditNotesList[type].splice(index, 1);
+      renderQuickNotesBody();
+    }
+
+    function updateQuickNoteEntry(type, index, value) {
+      quickEditNotesList[type][index] = value;
+    }
+
+    function renderQuickNotesBody() {
+      const container = document.getElementById("quickNotesBody");
+      container.innerHTML = `
+        <div class="space-y-4">
+          <div class="bg-gray-50 p-3 rounded-lg border space-y-2">
+            <div class="flex justify-between items-center">
+              <span class="text-xs font-bold text-gray-700">Storage Logs:</span>
+              <button type="button" onclick="addQuickNoteEntry('storage')" class="bg-indigo-600 text-white px-2 py-0.5 rounded text-xs font-semibold">+ Add Note</button>
+            </div>
+            ${quickEditNotesList.storage.length === 0 ? '<p class="text-xs text-gray-400 italic">No notes.</p>' : 
+              quickEditNotesList.storage.map((n, idx) => `
+                <div class="flex items-center gap-2">
+                  <input type="text" value="${n}" oninput="updateQuickNoteEntry('storage', ${idx}, this.value)" class="border p-1.5 rounded w-full text-xs bg-white outline-none">
+                  <button type="button" onclick="removeQuickNoteEntry('storage', ${idx})" class="text-red-600 font-bold px-1 text-xs">✕</button>
+                </div>
+              `).join('')}
+          </div>
+
+          <div class="bg-gray-50 p-3 rounded-lg border space-y-2">
+            <div class="flex justify-between items-center">
+              <span class="text-xs font-bold text-gray-700">Warehouse Rent Logs:</span>
+              <button type="button" onclick="addQuickNoteEntry('rent')" class="bg-indigo-600 text-white px-2 py-0.5 rounded text-xs font-semibold">+ Add Note</button>
+            </div>
+            ${quickEditNotesList.rent.length === 0 ? '<p class="text-xs text-gray-400 italic">No notes.</p>' : 
+              quickEditNotesList.rent.map((n, idx) => `
+                <div class="flex items-center gap-2">
+                  <input type="text" value="${n}" oninput="updateQuickNoteEntry('rent', ${idx}, this.value)" class="border p-1.5 rounded w-full text-xs bg-white outline-none">
+                  <button type="button" onclick="removeQuickNoteEntry('rent', ${idx})" class="text-red-600 font-bold px-1 text-xs">✕</button>
+                </div>
+              `).join('')}
+          </div>
+
+          <div class="bg-gray-50 p-3 rounded-lg border space-y-2">
+            <div class="flex justify-between items-center">
+              <span class="text-xs font-bold text-gray-700">Demurrage Logs:</span>
+              <button type="button" onclick="addQuickNoteEntry('demurrage')" class="bg-indigo-600 text-white px-2 py-0.5 rounded text-xs font-semibold">+ Add Note</button>
+            </div>
+            ${quickEditNotesList.demurrage.length === 0 ? '<p class="text-xs text-gray-400 italic">No notes.</p>' : 
+              quickEditNotesList.demurrage.map((n, idx) => `
+                <div class="flex items-center gap-2">
+                  <input type="text" value="${n}" oninput="updateQuickNoteEntry('demurrage', ${idx}, this.value)" class="border p-1.5 rounded w-full text-xs bg-white outline-none">
+                  <button type="button" onclick="removeQuickNoteEntry('demurrage', ${idx})" class="text-red-600 font-bold px-1 text-xs">✕</button>
+                </div>
+              `).join('')}
+          </div>
+
+          <button onclick="saveQuickNotes()" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-semibold text-xs shadow transition">Save Notes</button>
+        </div>
+      `;
+    }
+
+    async function saveQuickNotes() {
+      if (!currentActiveRecordId) return;
+      const item = (globalData.Clearing || []).find(x => String(x.ID) === String(currentActiveRecordId));
+      if (!item) return;
+
+      item.StorageNotesList = quickEditNotesList.storage;
+      item.RentNotesList = quickEditNotesList.rent;
+      item.DemurrageNotesList = quickEditNotesList.demurrage;
+
+      await sendToServer("Clearing", "update", item);
+      closeQuickNotesModal();
+      showNotification("Notes updated successfully!");
+    }
+
+    // --- MULTIPLE NOTES HELPER FOR FORM ---
+    let activeLogNotes = { storage: [], rent: [], demurrage: [] };
+
+    function addLogNoteEntry(type, text = "") {
+      activeLogNotes[type].push(text);
+      renderLogNotesList(type);
+    }
+
+    function removeLogNoteEntry(type, index) {
+      activeLogNotes[type].splice(index, 1);
+      renderLogNotesList(type);
+    }
+
+    function updateLogNoteEntry(type, index, value) {
+      activeLogNotes[type][index] = value;
+    }
+
+    function renderLogNotesList(type) {
+      const container = document.getElementById(`${type}_notes_container`);
+      if (!container) return;
+
+      if (activeLogNotes[type].length === 0) {
+        container.innerHTML = `<p class="text-xs text-gray-400 italic">No notes added yet.</p>`;
+        return;
+      }
+
+      container.innerHTML = activeLogNotes[type].map((note, idx) => `
+        <div class="flex items-center gap-2 mb-2">
+          <input type="text" value="${note}" oninput="updateLogNoteEntry('${type}', ${idx}, this.value)" placeholder="Enter note description..." class="border p-1.5 rounded w-full text-xs outline-none bg-white">
+          <button type="button" onclick="removeLogNoteEntry('${type}', ${idx})" class="bg-red-100 hover:bg-red-200 text-red-700 px-2.5 py-1.5 rounded text-xs font-bold">✕</button>
+        </div>
+      `).join('');
+    }
+
+    // --- UNIVERSAL MULTI-COLUMN SEARCH & FILTER LOGIC ---
+    function applyUniversalSearchAndFilter() {
+      const query = (document.getElementById("universalSearchInput")?.value || "").toLowerCase().trim();
+      const clientFilter = (document.getElementById("filterClient")?.value || "").toLowerCase();
+      const portFilter = (document.getElementById("filterPort")?.value || "").toLowerCase();
+      const transporterFilter = (document.getElementById("filterTransporter")?.value || "").toLowerCase();
+
+      const tbody = document.getElementById("clearingTableBody");
+      if (!tbody) return;
+
+      const rows = tbody.getElementsByTagName("tr");
+      let visibleCount = 0;
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        if (row.id === "noResultsRow") continue;
+
+        const textContent = row.textContent.toLowerCase();
+        const clientVal = (row.getAttribute("data-client") || "").toLowerCase();
+        const portVal = (row.getAttribute("data-port") || "").toLowerCase();
+        const transporterVal = (row.getAttribute("data-transporter") || "").toLowerCase();
+
+        const matchesSearch = !query || textContent.includes(query);
+        const matchesClient = !clientFilter || clientVal === clientFilter;
+        const matchesPort = !portFilter || portVal === portFilter;
+        const matchesTransporter = !transporterFilter || transporterVal === transporterFilter;
+
+        if (matchesSearch && matchesClient && matchesPort && matchesTransporter) {
+          row.style.display = "";
+          visibleCount++;
+        } else {
+          row.style.display = "none";
+        }
+      }
+
+      let noResultsRow = document.getElementById("noResultsRow");
+      if (visibleCount === 0) {
+        if (!noResultsRow) {
+          noResultsRow = document.createElement("tr");
+          noResultsRow.id = "noResultsRow";
+          noResultsRow.innerHTML = `<td colspan="19" class="p-4 text-center text-gray-400">No matching clearing files found.</td>`;
+          tbody.appendChild(noResultsRow);
+        } else {
+          noResultsRow.style.display = "";
+        }
+      } else if (noResultsRow) {
+        noResultsRow.style.display = "none";
+      }
+    }
+
+    // --- RENDER TABLE & DATA ---
     window.onDataLoaded = function(db) {
       db = db || {};
       const clearingList = db.Clearing || [];
       const paymentsList = db.ClearingPayments || [];
-      const invoicesList = db.ClearingInvoices || [];
 
       let totalClearingAndTransport = 0;
       let totalAllExpenses = 0;
@@ -46,42 +426,71 @@
         totalAllExpenses += (clearing + transport + storage + rent + demurrage);
       });
 
-      invoicesList.forEach(inv => {
-        if (Array.isArray(inv.ExtraCharges)) {
-          inv.ExtraCharges.forEach(ec => {
-            totalAllExpenses += (parseFloat(ec.amount) || 0);
-          });
-        }
-      });
-
       let totalPaid = paymentsList.reduce((sum, p) => sum + (parseFloat(p.AmountPaid) || 0), 0);
       let balanceOwed = totalAllExpenses - totalPaid;
 
+      const uniqueClients = [...new Set(clearingList.map(x => x.Client).filter(Boolean))];
+      const uniquePorts = [...new Set(clearingList.map(x => x.Port).filter(Boolean))];
+      const uniqueTransporters = [...new Set(clearingList.map(x => x.Transporter).filter(Boolean))];
+
+      const columns = ["ID", "ContainerNo", "BLno", "Consignee", "Client", "Size", "Port", "Destination", "RecDocs", "SentAgent", "ETA", "Offloaded", "Transporter", "Truck/Combo", "Clearing ($)", "Transport ($)", "Storage ($)", "Notes", "Actions"];
+
       let tableRows = "";
       clearingList.forEach(item => {
+        const attachments = Array.isArray(item.Attachments) ? item.Attachments : (item.AttachmentData ? [1] : []);
+        const hasFiles = attachments.length > 0;
+        const totalNotesCount = (item.StorageNotesList?.length || 0) + (item.RentNotesList?.length || 0) + (item.DemurrageNotesList?.length || 0) + (item.StorageNotes ? 1 : 0);
+
         tableRows += `
-          <tr class="hover:bg-gray-50 border-b cursor-pointer" onclick="alert('Viewing clearing item: ${item.ContainerNo}')">
+          <tr class="hover:bg-gray-50 border-b cursor-pointer" onclick="previewClearingDetails('${item.ID}')" 
+              data-client="${item.Client || ''}" 
+              data-port="${item.Port || ''}" 
+              data-transporter="${item.Transporter || ''}">
             <td class="p-3 text-xs text-gray-500 font-mono">${item.ID || ''}</td>
-            <td class="p-3 font-bold text-gray-800">📦 ${item.ContainerNo || ''}</td>
+            <td class="p-3 font-bold text-gray-800">📦 ${item.ContainerNo || ''} ${hasFiles ? `📎 (${attachments.length})` : ''}</td>
             <td class="p-3 text-xs text-blue-600">${item.BLno || ''}</td>
             <td class="p-3 text-xs">${item.Consignee || ''}</td>
             <td class="p-3 font-semibold text-indigo-700">${item.Client || ''}</td>
+            <td class="p-3 text-xs">${item.Size || ''}</td>
             <td class="p-3 text-xs">${item.Port || ''}</td>
             <td class="p-3 text-xs">${item.Destination || ''}</td>
+            <td class="p-3 text-xs text-gray-600">${item.RecDocs || 'N/A'}</td>
+            <td class="p-3 text-xs text-gray-600">${item.SentAgent || 'N/A'}</td>
+            <td class="p-3 text-xs text-gray-600 font-medium">${item.ETA || 'N/A'}</td>
+            <td class="p-3 text-xs text-gray-600">${item.Offloaded || 'N/A'}</td>
+            <td class="p-3 text-xs">${item.Transporter || ''}</td>
+            <td class="p-3 text-xs">${item.Truck || ''}</td>
             <td class="p-3 font-semibold text-blue-600">$${parseFloat(item.ClearingAmount || 0).toFixed(2)}</td>
             <td class="p-3 font-semibold text-emerald-600">$${parseFloat(item.TransportAmount || 0).toFixed(2)}</td>
             <td class="p-3 font-semibold text-red-600">$${parseFloat(item.StorageAmount || 0).toFixed(2)}</td>
+            <td class="p-3 text-center" onclick="event.stopPropagation()">
+              <button onclick="openQuickNotesModal('${item.ID}')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded text-xs font-semibold border border-indigo-200 transition">
+                📝 Notes (${totalNotesCount})
+              </button>
+            </td>
+            <td class="p-3 text-center whitespace-nowrap" onclick="event.stopPropagation()">
+              ${renderClearingActionCell('Clearing', item)}
+            </td>
           </tr>
         `;
       });
 
       document.getElementById("pageContent").innerHTML = `
-        <div class="bg-white p-2.5 rounded-xl border shadow-sm flex flex-wrap items-center justify-between gap-2">
+        <!-- Fixed Short Header Bar -->
+        <div class="bg-white p-2.5 rounded-xl border shadow-sm sticky top-[57px] z-10 flex flex-wrap items-center justify-between gap-2">
           <div class="flex items-center gap-2">
-            <button onclick="alert('Open form')" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-3 py-1.5 rounded-lg text-xs shadow transition">
+            <button onclick="openClearingFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-3 py-1.5 rounded-lg text-xs shadow transition">
               ➕ Add Port Clearing File
             </button>
+            <button onclick="openAllInvoicesModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-3 py-1.5 rounded-lg text-xs shadow transition">
+              📜 View All Invoices
+            </button>
+            <button onclick="openAllPaymentsModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-1.5 rounded-lg text-xs shadow transition">
+              💵 View All Payments
+            </button>
           </div>
+
+          <!-- Compact Ultra-Short Financial Bar -->
           <div class="flex items-center gap-2 text-xs">
             <div class="bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg">
               <span class="text-[10px] text-blue-600 font-semibold block uppercase">Clr+Trans</span>
@@ -91,28 +500,74 @@
               <span class="text-[10px] text-slate-600 font-semibold block uppercase">Total Expenses</span>
               <span class="font-bold text-slate-900">$${totalAllExpenses.toFixed(2)}</span>
             </div>
+            <div class="bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
+              <span class="text-[10px] text-emerald-600 font-semibold block uppercase">Paid</span>
+              <span class="font-bold text-emerald-900">$${totalPaid.toFixed(2)}</span>
+            </div>
+            <div class="bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
+              <span class="text-[10px] text-amber-600 font-semibold block uppercase">Balance Owe</span>
+              <span class="font-bold text-amber-900">$${balanceOwed.toFixed(2)}</span>
+            </div>
           </div>
         </div>
 
+        <!-- Scrollable Table Container -->
         <div class="bg-white rounded-xl shadow-sm border overflow-hidden flex-1 flex flex-col">
+          <!-- Universal Search & Column Filter Controls Bar -->
+          <div class="p-3 border-b bg-gray-50 flex flex-wrap justify-between items-center gap-2">
+            <div class="flex flex-wrap items-center gap-2 flex-1">
+              <input type="text" id="universalSearchInput" placeholder="🔍 Universal search across all columns..." oninput="applyUniversalSearchAndFilter()" class="border bg-white px-3 py-1.5 rounded text-xs w-full md:w-72 outline-none">
+              
+              <select id="filterClient" onchange="applyUniversalSearchAndFilter()" class="border bg-white px-2.5 py-1.5 rounded text-xs outline-none">
+                <option value="">All Clients</option>
+                ${uniqueClients.map(c => `<option value="${c}">${c}</option>`).join('')}
+              </select>
+
+              <select id="filterPort" onchange="applyUniversalSearchAndFilter()" class="border bg-white px-2.5 py-1.5 rounded text-xs outline-none">
+                <option value="">All Ports</option>
+                ${uniquePorts.map(p => `<option value="${p}">${p}</option>`).join('')}
+              </select>
+
+              <select id="filterTransporter" onchange="applyUniversalSearchAndFilter()" class="border bg-white px-2.5 py-1.5 rounded text-xs outline-none">
+                <option value="">All Transporters</option>
+                ${uniqueTransporters.map(t => `<option value="${t}">${t}</option>`).join('')}
+              </select>
+            </div>
+
+            <div class="flex items-center gap-2">
+              ${renderColumnVisibilityMenu('table_Clearing', columns)}
+              <button onclick="exportPDFTable('Clearing', globalData.Clearing || [])" class="bg-indigo-600 text-white px-2.5 py-1.5 rounded text-xs font-semibold">📥 PDF</button>
+              <button onclick="exportCSVData('Clearing', globalData.Clearing || [])" class="bg-green-600 text-white px-2.5 py-1.5 rounded text-xs font-semibold">📥 CSV</button>
+            </div>
+          </div>
+
           <div class="overflow-x-auto flex-1 min-h-[300px]">
-            <table class="w-full text-left border-collapse text-sm whitespace-nowrap">
+            <table class="w-full text-left border-collapse text-sm whitespace-nowrap" id="table_Clearing">
               <thead>
                 <tr class="bg-gray-100 text-gray-600 text-xs">
                   <th class="p-3">ID</th>
-                  <th class="p-3">Container No</th>
-                  <th class="p-3">BL No</th>
+                  <th class="p-3">ContainerNo</th>
+                  <th class="p-3">BLno</th>
                   <th class="p-3">Consignee</th>
                   <th class="p-3">Client</th>
+                  <th class="p-3">Size</th>
                   <th class="p-3">Port</th>
                   <th class="p-3">Destination</th>
+                  <th class="p-3">RecDocs</th>
+                  <th class="p-3">SentAgent</th>
+                  <th class="p-3">ETA</th>
+                  <th class="p-3">Offloaded</th>
+                  <th class="p-3">Transporter</th>
+                  <th class="p-3">Truck/Combo</th>
                   <th class="p-3">Clearing ($)</th>
                   <th class="p-3">Transport ($)</th>
                   <th class="p-3">Storage ($)</th>
+                  <th class="p-3 text-center">Notes</th>
+                  <th class="p-3 text-center">Actions</th>
                 </tr>
               </thead>
-              <tbody class="divide-y">
-                ${tableRows || '<tr><td colspan="10" class="p-6 text-center text-gray-400">No clearing files found in database.</td></tr>'}
+              <tbody class="divide-y" id="clearingTableBody">
+                ${tableRows || '<tr><td colspan="19" class="p-4 text-center text-gray-400">No clearing files found. Click "Add Port Clearing File" to start.</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -120,16 +575,923 @@
       `;
     };
 
-    // Auto-trigger fetch if app.js doesn't trigger onDataLoaded automatically
-    if (typeof fetchDatabase === 'function') {
-      fetchDatabase();
-    } else {
-      setTimeout(() => {
-        if (document.getElementById("pageContent").innerHTML.includes("Loading")) {
-          document.getElementById("pageContent").innerHTML = `<div class="p-6 text-center text-red-500 font-semibold">Error: app.js failed to load or connect properly. Please check your file path.</div>`;
-        }
-      }, 3000);
+    function renderClearingActionCell(sheetName, item) {
+      const id = item.ID;
+      const attachments = Array.isArray(item.Attachments) ? item.Attachments : (item.AttachmentData ? [1] : []);
+      const count = attachments.length;
+
+      return `
+        <div class="inline-block relative text-left">
+          <button onclick="toggleActionDropdown('${id}')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded text-xs font-semibold transition border">
+            Actions ▼
+          </button>
+          <div id="actionMenu_${id}" class="hidden absolute right-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-xl z-20 py-1 text-left text-xs flex flex-col space-y-0.5">
+            <button onclick="editRecord('${sheetName}', '${id}')" class="w-full text-left px-3 py-1.5 hover:bg-amber-50 text-amber-800 font-medium">✏️ Edit</button>
+            <button onclick="previewClearingDetails('${id}')" class="w-full text-left px-3 py-1.5 hover:bg-blue-50 text-blue-800 font-medium">👁️ Preview</button>
+            <button onclick="openFilesModal('${id}')" class="w-full text-left px-3 py-1.5 hover:bg-indigo-50 text-indigo-800 font-medium flex justify-between items-center">
+              <span>📁 Files (${count})</span>
+              <span class="text-[10px] bg-indigo-100 text-indigo-800 px-1.5 rounded-full">Manage</span>
+            </button>
+            <button onclick="downloadReceipt('${sheetName}', '${id}')" class="w-full text-left px-3 py-1.5 hover:bg-indigo-50 text-indigo-800 font-medium">📄 Download Receipt</button>
+            <button onclick="archiveRecord('${sheetName}', '${id}')" class="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-800 font-medium">📦 Archive</button>
+            <button onclick="deleteRecord('${sheetName}', '${id}')" class="w-full text-left px-3 py-1.5 hover:bg-red-50 text-red-800 font-medium border-t">🗑️ Delete</button>
+          </div>
+        </div>
+      `;
     }
+
+    function openClearingFormModal(item = null) {
+      const db = globalData || {};
+      const contacts = db.Contacts || [];
+      const combinations = db.Combinations || [];
+      const trucks = db.Trucks || [];
+
+      const ports = ["Port of Dar es Salaam", "Port of Mombasa", "Kigali ICD (Magarum)", "Rusumo Dry Port"];
+      const destinations = ["Kigali, Rwanda", "Goma, DRC", "Bukavu, DRC", "Bujumbura, Burundi", "Kampala, Uganda"];
+
+      formModalActiveFiles = item ? (Array.isArray(item.Attachments) ? [...item.Attachments] : (item.AttachmentData ? [{name: item.AttachmentName || 'Document', data: item.AttachmentData}] : [])) : [];
+      
+      activeLogNotes = {
+        storage: item && Array.isArray(item.StorageNotesList) ? [...item.StorageNotesList] : (item && item.StorageNotes ? [item.StorageNotes] : []),
+        rent: item && Array.isArray(item.RentNotesList) ? [...item.RentNotesList] : (item && item.RentNotes ? [item.RentNotes] : []),
+        demurrage: item && Array.isArray(item.DemurrageNotesList) ? [...item.DemurrageNotesList] : (item && item.DemurrageNotes ? [item.DemurrageNotes] : [])
+      };
+
+      const editId = item ? item.ID : '';
+      const html = `
+        <form onsubmit="submitClearingForm(event)" class="space-y-4 max-h-[75vh] overflow-y-auto px-1">
+          <input type="hidden" id="cl_edit_id" value="${editId}">
+
+          <div class="bg-indigo-50/60 p-3.5 rounded-xl border border-indigo-200 space-y-3">
+            <div class="flex justify-between items-center">
+              <label class="text-xs font-bold text-indigo-900">📎 Attach Multiple Documents (BL, Invoice, Receipts)</label>
+              <button type="button" onclick="triggerMultiFileInput()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">
+                📁 Choose Files
+              </button>
+            </div>
+            <div id="formFilesList" class="space-y-1.5">
+              ${renderFormFilesListHTML()}
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Container No</label>
+              <input type="text" id="cl_container" value="${item ? item.ContainerNo || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">BL No</label>
+              <input type="text" id="cl_bl" value="${item ? item.BLno || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Size</label>
+              <select id="cl_size" class="border p-2 rounded w-full text-sm outline-none bg-white">
+                <option value="20ft" ${item && item.Size === '20ft' ? 'selected' : ''}>20ft</option>
+                <option value="40ft" ${item && item.Size === '40ft' ? 'selected' : ''}>40ft</option>
+                <option value="45ft" ${item && item.Size === '45ft' ? 'selected' : ''}>45ft</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Consignee</label>
+              <input type="text" id="cl_consignee" value="${item ? item.Consignee || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Client</label>
+              <input type="text" id="cl_client" value="${item ? item.Client || '' : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Port</label>
+              <input type="text" id="cl_port" list="portsList" value="${item ? item.Port || '' : ''}" placeholder="Select or type port" required class="border p-2 rounded w-full text-sm outline-none">
+              <datalist id="portsList">
+                ${ports.map(p => `<option value="${p}">`).join('')}
+              </datalist>
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Destination</label>
+              <input type="text" id="cl_destination" list="destList" value="${item ? item.Destination || '' : ''}" placeholder="Select or type destination" required class="border p-2 rounded w-full text-sm outline-none">
+              <datalist id="destList">
+                ${destinations.map(d => `<option value="${d}">`).join('')}
+              </datalist>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-3 bg-gray-50 p-3 rounded-lg border">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Received Docs On</label>
+              <input type="date" id="cl_recDocs" value="${item ? item.RecDocs || '' : ''}" class="border p-1.5 rounded w-full text-xs outline-none bg-white">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Sent to Agent On</label>
+              <input type="date" id="cl_sentAgent" value="${item ? item.SentAgent || '' : ''}" class="border p-1.5 rounded w-full text-xs outline-none bg-white">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">ETA</label>
+              <input type="date" id="cl_eta" value="${item ? item.ETA || '' : ''}" class="border p-1.5 rounded w-full text-xs outline-none bg-white">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Vessel Offloaded On</label>
+              <input type="date" id="cl_offloaded" value="${item ? item.Offloaded || '' : ''}" class="border p-1.5 rounded w-full text-xs outline-none bg-white">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 bg-gray-50 p-3 rounded-lg border">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Storage On</label>
+              <input type="date" id="cl_storageDate" value="${item ? item.StorageDate || '' : ''}" class="border p-1.5 rounded w-full text-xs outline-none bg-white">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Loaded On (Truck)</label>
+              <input type="date" id="cl_loadedDate" value="${item ? item.LoadedDate || '' : ''}" class="border p-1.5 rounded w-full text-xs outline-none bg-white">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Transporter</label>
+              <input type="text" id="cl_transporter" list="transporterList" value="${item ? item.Transporter || '' : ''}" placeholder="Select or type transporter" class="border p-2 rounded w-full text-sm outline-none">
+              <datalist id="transporterList">
+                ${contacts.map(c => `<option value="${c.Name || c.Company || c.ID}">`).join('')}
+              </datalist>
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1 font-semibold">Truck / Combination</label>
+              <input type="text" id="cl_truck" list="comboTruckList" value="${item ? item.Truck || '' : ''}" placeholder="Select truck or combination" class="border p-2 rounded w-full text-sm outline-none">
+              <datalist id="comboTruckList">
+                ${combinations.map(cb => `<option value="${cb.CombinationName || cb.TruckPlate || cb.ID}">`).join('')}
+                ${trucks.map(t => `<option value="${t.PlateNumber || t.ID}">`).join('')}
+              </datalist>
+            </div>
+          </div>
+
+          <div class="border-t pt-3 space-y-3">
+            <h3 class="font-bold text-gray-700 text-sm">Client Agent & Shipping Lines</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Agent Full Name / Company</label>
+                <input type="text" id="cl_agentName" value="${item ? item.AgentName || '' : ''}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Agent Tel</label>
+                <input type="text" id="cl_agentTel" value="${item ? item.AgentTel || '' : ''}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Agent Email</label>
+                <input type="email" id="cl_agentEmail" value="${item ? item.AgentEmail || '' : ''}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+            </div>
+            <div>
+              <label class="text-xs text-gray-500 block mb-1">Shipping Line(s)</label>
+              <input type="text" id="cl_shippingLines" value="${item ? item.ShippingLines || '' : ''}" placeholder="e.g. MSC, Maersk, CMA CGM (comma separated)" class="border p-2 rounded w-full text-sm outline-none">
+            </div>
+          </div>
+
+          <div class="border-t pt-3 space-y-3">
+            <h3 class="font-bold text-gray-700 text-sm">Financials & Multiple Charge Notes</h3>
+            
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-2">
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Clearing ($)</label>
+                <input type="number" step="0.01" id="cl_clearingAmt" value="${item ? item.ClearingAmount || 0 : 0}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Transport ($)</label>
+                <input type="number" step="0.01" id="cl_transportAmt" value="${item ? item.TransportAmount || 0 : 0}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Storage ($)</label>
+                <input type="number" step="0.01" id="cl_storageAmt" value="${item ? item.StorageAmount || 0 : 0}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Rent ($)</label>
+                <input type="number" step="0.01" id="cl_rentAmt" value="${item ? item.RentAmount || 0 : 0}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Demurrage ($)</label>
+                <input type="number" step="0.01" id="cl_demurrageAmt" value="${item ? item.DemurrageAmount || 0 : 0}" class="border p-2 rounded w-full text-sm outline-none">
+              </div>
+            </div>
+
+            <div class="space-y-3 bg-gray-50 p-3 rounded-lg border">
+              <div>
+                <div class="flex justify-between items-center mb-1">
+                  <span class="text-xs font-bold text-gray-700">Storage Charge Logs / Notes:</span>
+                  <button type="button" onclick="addLogNoteEntry('storage')" class="bg-indigo-600 text-white px-2 py-0.5 rounded text-xs font-semibold">+ Add Note</button>
+                </div>
+                <div id="storage_notes_container"></div>
+              </div>
+
+              <div>
+                <div class="flex justify-between items-center mb-1">
+                  <span class="text-xs font-bold text-gray-700">Warehouse Rent Logs / Notes:</span>
+                  <button type="button" onclick="addLogNoteEntry('rent')" class="bg-indigo-600 text-white px-2 py-0.5 rounded text-xs font-semibold">+ Add Note</button>
+                </div>
+                <div id="rent_notes_container"></div>
+              </div>
+
+              <div>
+                <div class="flex justify-between items-center mb-1">
+                  <span class="text-xs font-bold text-gray-700">Demurrage / Detention Logs / Notes:</span>
+                  <button type="button" onclick="addLogNoteEntry('demurrage')" class="bg-indigo-600 text-white px-2 py-0.5 rounded text-xs font-semibold">+ Add Note</button>
+                </div>
+                <div id="demurrage_notes_container"></div>
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition">
+            ${item ? 'Update Clearing File' : 'Save Clearing File'}
+          </button>
+        </form>
+      `;
+
+      openFormModal(item ? `Edit Clearing File: ${item.ContainerNo}` : "New Port Clearing File", html);
+      renderLogNotesList('storage');
+      renderLogNotesList('rent');
+      renderLogNotesList('demurrage');
+    }
+
+    function renderFormFilesListHTML() {
+      if (formModalActiveFiles.length === 0) {
+        return `<span class="text-xs text-gray-500 italic">No files selected yet.</span>`;
+      }
+      return formModalActiveFiles.map((file, idx) => `
+        <div class="flex justify-between items-center bg-white p-2 rounded border text-xs">
+          <span class="truncate max-w-[240px] font-semibold text-gray-700">📎 ${file.name}</span>
+          <div class="flex items-center gap-2">
+            <button type="button" onclick="previewSingleFile('${file.name}', '${file.data}', '${file.type || ''}')" class="text-blue-600 hover:text-blue-800 font-semibold">Preview</button>
+            <button type="button" onclick="removeFormFile(${idx})" class="text-red-600 hover:text-red-800 font-bold px-1">✕</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderFormFilesList() {
+      const container = document.getElementById("formFilesList");
+      if (container) container.innerHTML = renderFormFilesListHTML();
+    }
+
+    function removeFormFile(index) {
+      formModalActiveFiles.splice(index, 1);
+      renderFormFilesList();
+    }
+
+    async function submitClearingForm(e) {
+      e.preventDefault();
+      const editId = document.getElementById("cl_edit_id").value;
+      const transporterName = document.getElementById("cl_transporter").value.trim();
+
+      if (transporterName) {
+        const db = globalData || {};
+        const contacts = db.Contacts || [];
+        const exists = contacts.some(c => String(c.Name || c.Company).toLowerCase() === transporterName.toLowerCase());
+        if (!exists) {
+          const newContact = {
+            ID: "CON-" + Date.now().toString().slice(-4),
+            Name: transporterName,
+            Category: "Transporter",
+            Phone: document.getElementById("cl_agentTel").value || ""
+          };
+          await sendToServer("Contacts", "add", newContact);
+        }
+      }
+
+      const data = {
+        ID: editId || ("CLR-" + Date.now().toString().slice(-4)),
+        ContainerNo: document.getElementById("cl_container").value,
+        BLno: document.getElementById("cl_bl").value,
+        Size: document.getElementById("cl_size").value,
+        Consignee: document.getElementById("cl_consignee").value,
+        Client: document.getElementById("cl_client").value,
+        Port: document.getElementById("cl_port").value,
+        Destination: document.getElementById("cl_destination").value,
+        RecDocs: document.getElementById("cl_recDocs").value,
+        SentAgent: document.getElementById("cl_sentAgent").value,
+        ETA: document.getElementById("cl_eta").value,
+        Offloaded: document.getElementById("cl_offloaded").value,
+        StorageDate: document.getElementById("cl_storageDate").value,
+        LoadedDate: document.getElementById("cl_loadedDate").value,
+        Transporter: transporterName,
+        Truck: document.getElementById("cl_truck").value,
+        AgentName: document.getElementById("cl_agentName").value,
+        AgentTel: document.getElementById("cl_agentTel").value,
+        AgentEmail: document.getElementById("cl_agentEmail").value,
+        ShippingLines: document.getElementById("cl_shippingLines").value,
+        ClearingAmount: document.getElementById("cl_clearingAmt").value,
+        TransportAmount: document.getElementById("cl_transportAmt").value,
+        StorageAmount: document.getElementById("cl_storageAmt").value,
+        RentAmount: document.getElementById("cl_rentAmt").value,
+        DemurrageAmount: document.getElementById("cl_demurrageAmt").value,
+        StorageNotesList: activeLogNotes.storage,
+        RentNotesList: activeLogNotes.rent,
+        DemurrageNotesList: activeLogNotes.demurrage,
+        Attachments: formModalActiveFiles
+      };
+
+      await sendToServer("Clearing", editId ? "update" : "add", data);
+      closeFormModal();
+      showNotification("Clearing file saved successfully!");
+    }
+
+    // --- AGENT & TRANSPORTER INVOICES & PAYMENTS SYSTEM ---
+    function renderInvoicesManagementSection(containerId) {
+      const db = globalData || {};
+      const allInvoices = db.ClearingInvoices || [];
+      const invoices = allInvoices.filter(inv => String(inv.ClearingID) === String(containerId));
+
+      let totalInvoiced = invoices.reduce((sum, inv) => sum + (parseFloat(inv.Amount) || 0), 0);
+
+      let invoiceRows = invoices.map(inv => {
+        let statusBadge = 'bg-amber-100 text-amber-800';
+        if (inv.Status === 'Fully Paid') statusBadge = 'bg-emerald-100 text-emerald-800';
+        else if (String(inv.Status || '').includes('Part Paid')) statusBadge = 'bg-blue-100 text-blue-800';
+
+        return `
+          <tr class="hover:bg-gray-50 border-b text-xs">
+            <td class="p-2"><input type="checkbox" class="inv-checkbox" value="${inv.ID}" data-amount="${inv.Amount}"></td>
+            <td class="p-2 font-mono">${inv.ID}</td>
+            <td class="p-2 font-semibold text-gray-800">${inv.ContainerNo}</td>
+            <td class="p-2">${inv.Type}</td>
+            <td class="p-2">${inv.BeneficiaryName}</td>
+            <td class="p-2 font-semibold text-blue-600">$${parseFloat(inv.Amount || 0).toFixed(2)}</td>
+            <td class="p-2"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${statusBadge}">${inv.Status || 'Unpaid'}</span></td>
+            <td class="p-2 text-right space-x-1">
+              <button onclick="editInvoiceRecord('${inv.ID}')" class="bg-amber-100 text-amber-800 hover:bg-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">✏️ Edit</button>
+              <button onclick="deleteInvoiceRecord('${inv.ID}')" class="bg-red-100 text-red-800 hover:bg-red-200 px-2 py-0.5 rounded text-[10px] font-bold">🗑️ Delete</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      return `
+        <div class="border-t pt-4 space-y-4">
+          <div class="flex justify-between items-center">
+            <h3 class="font-bold text-gray-800 text-sm">💵 Container Invoices & Payments</h3>
+            <button onclick="openRecordInvoiceModal('${containerId}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Record New Invoice</button>
+          </div>
+
+          <div class="bg-blue-50 border border-blue-200 p-3 rounded-lg flex justify-between items-center">
+            <span class="text-xs text-blue-600 font-semibold">Total Invoiced for this Container</span>
+            <span class="text-lg font-bold text-blue-900">$${totalInvoiced.toFixed(2)}</span>
+          </div>
+
+          <!-- Invoices Table -->
+          <div class="bg-white rounded-lg border overflow-hidden">
+            <div class="p-3 bg-gray-50 border-b flex flex-col md:flex-row justify-between items-center gap-2">
+              <div class="flex items-center gap-2 w-full md:w-auto">
+                <span class="font-bold text-xs text-gray-700 uppercase whitespace-nowrap">Container Invoices</span>
+                <input type="text" placeholder="🔍 Search invoices..." oninput="filterTable(event, 'tbl_preview_invoices')" class="border px-2 py-1 rounded text-xs outline-none w-full md:w-48">
+              </div>
+              <button onclick="openPaymentModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs font-semibold shadow">Pay Selected Invoices</button>
+            </div>
+            <div class="overflow-x-auto max-h-48">
+              <table class="w-full text-left text-xs" id="tbl_preview_invoices">
+                <thead>
+                  <tr class="bg-gray-100 text-gray-500">
+                    <th class="p-2"><input type="checkbox" onclick="toggleAllInvoices(this)"></th>
+                    <th class="p-2">ID</th>
+                    <th class="p-2">Container</th>
+                    <th class="p-2">Type</th>
+                    <th class="p-2">Beneficiary</th>
+                    <th class="p-2">Amount ($)</th>
+                    <th class="p-2">Status</th>
+                    <th class="p-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y">
+                  ${invoiceRows || '<tr><td colspan="8" class="p-3 text-center text-gray-400">No invoices recorded for this container. Click "Record New Invoice" to add.</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function toggleAllInvoices(masterCheckbox) {
+      document.querySelectorAll('.inv-checkbox').forEach(cb => cb.checked = masterCheckbox.checked);
+    }
+
+    function openRecordInvoiceModal(prefillClearingId = "", itemToEdit = null) {
+      const db = globalData || {};
+      const clearingList = db.Clearing || [];
+
+      const html = `
+        <form onsubmit="submitInvoiceForm(event)" class="space-y-3">
+          <input type="hidden" id="inv_edit_id" value="${itemToEdit ? itemToEdit.ID : ''}">
+          <div>
+            <label class="text-xs text-gray-500 block mb-1 font-semibold">Select Container / Clearing File</label>
+            <select id="inv_clearingId" onchange="onContainerInvoiceSelected(this.value)" class="border p-2 rounded w-full text-sm outline-none bg-white">
+              <option value="">-- Choose Container --</option>
+              ${clearingList.map(c => `<option value="${c.ID}" ${(itemToEdit && itemToEdit.ClearingID === c.ID) || (prefillClearingId === c.ID) ? 'selected' : ''}>${c.ContainerNo} (Client:${c.Client})</option>`).join('')}
+            </select>
+          </div>
+
+          <div>
+            <label class="text-xs text-gray-500 block mb-1 font-semibold">Invoice Type</label>
+            <select id="inv_type" onchange="updateInvoiceBeneficiary()" class="border p-2 rounded w-full text-sm outline-none bg-white">
+              <option value="Clearing" ${itemToEdit && itemToEdit.Type === 'Clearing' ? 'selected' : ''}>Clearing Invoice (Agent)</option>
+              <option value="Transport" ${itemToEdit && itemToEdit.Type === 'Transport' ? 'selected' : ''}>Transport Invoice (Transporter)</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="text-xs text-gray-500 block mb-1 font-semibold">Beneficiary Name</label>
+            <input type="text" id="inv_beneficiary" value="${itemToEdit ? itemToEdit.BeneficiaryName || '' : ''}" class="border p-2 rounded w-full text-sm font-semibold text-gray-700 outline-none">
+          </div>
+
+          <div>
+            <label class="text-xs text-gray-500 block mb-1 font-semibold">Amount ($)</label>
+            <input type="number" step="0.01" id="inv_amount" value="${itemToEdit ? itemToEdit.Amount || 0 : ''}" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+
+          <div>
+            <label class="text-xs text-gray-500 block mb-1 font-semibold">Status</label>
+            <select id="inv_status" class="border p-2 rounded w-full text-sm outline-none bg-white">
+              <option value="Unpaid" ${itemToEdit && itemToEdit.Status === 'Unpaid' ? 'selected' : ''}>Unpaid</option>
+              <option value="Fully Paid" ${itemToEdit && itemToEdit.Status === 'Fully Paid' ? 'selected' : ''}>Fully Paid</option>
+            </select>
+          </div>
+
+          <button type="submit" class="w-full bg-emerald-600 text-white py-2 rounded-lg font-semibold hover:bg-emerald-700 transition">
+            ${itemToEdit ? 'Update Invoice' : 'Save Invoice'}
+          </button>
+        </form>
+      `;
+
+      openFormModal(itemToEdit ? `Edit Invoice: ${itemToEdit.ID}` : "Record Agent / Transporter Invoice", html);
+      if (prefillClearingId && !itemToEdit) onContainerInvoiceSelected(prefillClearingId);
+    }
+
+    function editInvoiceRecord(invId) {
+      const db = globalData || {};
+      const inv = (db.ClearingInvoices || []).find(x => String(x.ID) === String(invId));
+      if (inv) openRecordInvoiceModal(inv.ClearingID, inv);
+    }
+
+    async function deleteInvoiceRecord(invId) {
+      if (!confirm(`Are you sure you want to delete invoice ${invId}?`)) return;
+      await sendToServer("ClearingInvoices", "delete", { ID: invId });
+      showNotification("Invoice deleted.");
+      if (currentActiveRecordId) previewClearingDetails(currentActiveRecordId);
+      if (!document.getElementById("allInvoicesModal").classList.contains("hidden")) openAllInvoicesModal();
+    }
+
+    let selectedInvoiceClearingItem = null;
+
+    function onContainerInvoiceSelected(clearingId) {
+      const db = globalData || {};
+      selectedInvoiceClearingItem = (db.Clearing || []).find(x => String(x.ID) === String(clearingId));
+      updateInvoiceBeneficiary();
+    }
+
+    function updateInvoiceBeneficiary() {
+      if (!selectedInvoiceClearingItem) return;
+      const type = document.getElementById("inv_type").value;
+      const benInput = document.getElementById("inv_beneficiary");
+      const amtInput = document.getElementById("inv_amount");
+
+      if (type === "Clearing") {
+        benInput.value = selectedInvoiceClearingItem.AgentName || selectedInvoiceClearingItem.Consignee || "Agent";
+        if (!document.getElementById("inv_edit_id").value) amtInput.value = selectedInvoiceClearingItem.ClearingAmount || 0;
+      } else {
+        benInput.value = selectedInvoiceClearingItem.Transporter || "Transporter";
+        if (!document.getElementById("inv_edit_id").value) amtInput.value = selectedInvoiceClearingItem.TransportAmount || 0;
+      }
+    }
+
+    async function submitInvoiceForm(e) {
+      e.preventDefault();
+      const editId = document.getElementById("inv_edit_id").value;
+      const clearingId = document.getElementById("inv_clearingId").value;
+      
+      const db = globalData || {};
+      const clearingItem = (db.Clearing || []).find(x => String(x.ID) === String(clearingId)) || selectedInvoiceClearingItem;
+
+      const data = {
+        ID: editId || ("INV-" + Date.now().toString().slice(-4)),
+        ClearingID: clearingItem ? clearingItem.ID : '',
+        ContainerNo: clearingItem ? clearingItem.ContainerNo : '',
+        Type: document.getElementById("inv_type").value,
+        BeneficiaryName: document.getElementById("inv_beneficiary").value,
+        Amount: parseFloat(document.getElementById("inv_amount").value) || 0,
+        Status: document.getElementById("inv_status").value
+      };
+
+      if (!globalData.ClearingInvoices) globalData.ClearingInvoices = [];
+      await sendToServer("ClearingInvoices", editId ? "update" : "add", data);
+      closeFormModal();
+      showNotification(`Invoice ${editId ? 'updated' : 'recorded'} successfully!`);
+      if (currentActiveRecordId) previewClearingDetails(currentActiveRecordId);
+      if (!document.getElementById("allInvoicesModal").classList.contains("hidden")) openAllInvoicesModal();
+    }
+
+    function openPaymentModal() {
+      const checkedBoxes = document.querySelectorAll('.inv-checkbox:checked');
+      if (checkedBoxes.length === 0) return alert("Please select at least one invoice to pay.");
+
+      let totalSelectedAmount = 0;
+      let selectedIds = [];
+      checkedBoxes.forEach(cb => {
+        totalSelectedAmount += parseFloat(cb.getAttribute("data-amount")) || 0;
+        selectedIds.push(cb.value);
+      });
+
+      const modalBody = document.getElementById("invoicePaymentBody");
+      modalBody.innerHTML = `
+        <form onsubmit="submitPayment(event, '${selectedIds.join(",")}')" class="space-y-3">
+          <div>
+            <label class="text-xs text-gray-500 block mb-1 font-semibold">Payment Date</label>
+            <input type="date" id="pay_date" required class="border p-2 rounded w-full text-sm outline-none bg-white" value="${new Date().toISOString().split('T')[0]}">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1 font-semibold">Total Selected Invoices Amount ($)</label>
+            <input type="text" readonly value="$${totalSelectedAmount.toFixed(2)}" class="border p-2 rounded w-full text-sm bg-gray-100 font-bold text-blue-700">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1 font-semibold">Amount To Pay ($)</label>
+            <input type="number" step="0.01" id="pay_amount" value="${totalSelectedAmount.toFixed(2)}" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded-lg font-semibold hover:bg-blue-700 transition">Confirm & Pay</button>
+        </form>
+      `;
+
+      document.getElementById("invoicePaymentModal").classList.remove("hidden");
+    }
+
+    function closeInvoicePaymentModal() {
+      document.getElementById("invoicePaymentModal").classList.add("hidden");
+    }
+
+    function editPaymentRecord(payId) {
+      const db = globalData || {};
+      const p = (db.ClearingPayments || []).find(x => String(x.ID) === String(payId));
+      if (!p) return;
+
+      const modalBody = document.getElementById("invoicePaymentBody");
+      modalBody.innerHTML = `
+        <form onsubmit="submitEditPayment(event, '${p.ID}')" class="space-y-3">
+          <div>
+            <label class="text-xs text-gray-500 block mb-1 font-semibold">Payment Date</label>
+            <input type="date" id="edit_pay_date" value="${p.Date || ''}" required class="border p-2 rounded w-full text-sm outline-none bg-white">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1 font-semibold">Beneficiary Name</label>
+            <input type="text" id="edit_pay_ben" value="${p.BeneficiaryName || ''}" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1 font-semibold">Amount Paid ($)</label>
+            <input type="number" step="0.01" id="edit_pay_amount" value="${p.AmountPaid || 0}" required class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 block mb-1 font-semibold">Covered Invoices</label>
+            <input type="text" id="edit_pay_invs" value="${p.InvoicesPaid || ''}" class="border p-2 rounded w-full text-sm outline-none">
+          </div>
+          <button type="submit" class="w-full bg-amber-600 text-white py-2 rounded-lg font-semibold hover:bg-amber-700 transition">Update Payment Record</button>
+        </form>
+      `;
+
+      document.getElementById("invoicePaymentModal").classList.remove("hidden");
+    }
+
+    async function deletePaymentRecord(payId) {
+      if (!confirm(`Are you sure you want to delete payment record ${payId}?`)) return;
+      await sendToServer("ClearingPayments", "delete", { ID: payId });
+      showNotification("Payment record deleted.");
+      if (currentActiveRecordId) previewClearingDetails(currentActiveRecordId);
+      if (!document.getElementById("allPaymentsModal").classList.contains("hidden")) openAllPaymentsModal();
+    }
+
+    async function submitEditPayment(e, payId) {
+      e.preventDefault();
+      const db = globalData || {};
+      const p = (db.ClearingPayments || []).find(x => String(x.ID) === String(payId));
+      if (p) {
+        p.Date = document.getElementById("edit_pay_date").value;
+        p.BeneficiaryName = document.getElementById("edit_pay_ben").value;
+        p.AmountPaid = parseFloat(document.getElementById("edit_pay_amount").value) || 0;
+        p.InvoicesPaid = document.getElementById("edit_pay_invs").value;
+
+        await sendToServer("ClearingPayments", "update", p);
+        closeInvoicePaymentModal();
+        showNotification("Payment record updated!");
+        if (currentActiveRecordId) previewClearingDetails(currentActiveRecordId);
+        if (!document.getElementById("allPaymentsModal").classList.contains("hidden")) openAllPaymentsModal();
+      }
+    }
+
+    async function submitPayment(e, invoiceIdsStr) {
+      e.preventDefault();
+      const ids = invoiceIdsStr.split(",");
+      const payAmount = parseFloat(document.getElementById("pay_amount").value) || 0;
+      const payDate = document.getElementById("pay_date").value;
+
+      if (!globalData.ClearingInvoices) globalData.ClearingInvoices = [];
+      if (!globalData.ClearingPayments) globalData.ClearingPayments = [];
+
+      let remainingPayment = payAmount;
+      let beneficiary = "";
+
+      ids.forEach(invId => {
+        const inv = globalData.ClearingInvoices.find(x => String(x.ID) === String(invId));
+        if (inv) {
+          beneficiary = inv.BeneficiaryName;
+          let invAmt = parseFloat(inv.Amount) || 0;
+          if (remainingPayment >= invAmt) {
+            inv.Status = "Fully Paid";
+            remainingPayment -= invAmt;
+          } else if (remainingPayment > 0) {
+            inv.Status = `Part Paid ($${remainingPayment.toFixed(2)} paid)`;
+            remainingPayment = 0;
+          }
+        }
+      });
+
+      const newPayment = {
+        ID: "PAY-" + Date.now().toString().slice(-4),
+        Date: payDate,
+        BeneficiaryName: beneficiary || "Agent/Transporter",
+        AmountPaid: payAmount,
+        InvoicesPaid: ids.join(", ")
+      };
+
+      await sendToServer("ClearingPayments", "add", newPayment);
+      for (const invId of ids) {
+        const inv = globalData.ClearingInvoices.find(x => String(x.ID) === String(invId));
+        if (inv) await sendToServer("ClearingInvoices", "update", inv);
+      }
+
+      closeInvoicePaymentModal();
+      showNotification("Payment recorded successfully!");
+      if (currentActiveRecordId) previewClearingDetails(currentActiveRecordId);
+      if (!document.getElementById("allPaymentsModal").classList.contains("hidden")) openAllPaymentsModal();
+    }
+
+    // --- DOWNLOAD PAYMENT TRANSACTION RECEIPT (PDF) ---
+    function downloadPaymentReceiptPDF(payId) {
+      const db = globalData || {};
+      const p = (db.ClearingPayments || []).find(x => String(x.ID) === String(payId));
+      if (!p) return alert("Payment record not found.");
+
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(18);
+      doc.text("FLEETDESK - PAYMENT TRANSACTION RECEIPT", 105, 20, { align: "center" });
+
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Receipt ID: ${p.ID}`, 20, 35);
+      doc.text(`Date: ${p.Date || 'N/A'}`, 20, 42);
+      doc.text(`Beneficiary: ${p.BeneficiaryName}`, 20, 49);
+
+      doc.setLineWidth(0.5);
+      doc.line(20, 56, 190, 56);
+
+      doc.setFont("helvetica", "bold");
+      doc.text("Covered Invoices:", 20, 68);
+      doc.setFont("helvetica", "normal");
+      doc.text(`${p.InvoicesPaid || 'N/A'}`, 20, 75);
+
+      doc.setFont("helvetica", "bold");
+      doc.text(`Total Amount Paid: $${parseFloat(p.AmountPaid || 0).toFixed(2)}`, 20, 95);
+
+      doc.setFontSize(9);
+      doc.setTextColor(100);
+      doc.text("Thank you for your business. Generated by FleetDesk.", 105, 120, { align: "center" });
+
+      doc.save(`Payment_Receipt_${p.ID}.pdf`);
+    }
+
+    // --- GLOBAL VIEW ALL INVOICES & PAYMENTS MODALS ---
+    function openAllInvoicesModal() {
+      const db = globalData || {};
+      const invoices = db.ClearingInvoices || [];
+      const totalInvoiced = invoices.reduce((sum, inv) => sum + (parseFloat(inv.Amount) || 0), 0);
+
+      let rows = invoices.map(inv => {
+        let statusBadge = 'bg-amber-100 text-amber-800';
+        if (inv.Status === 'Fully Paid') statusBadge = 'bg-emerald-100 text-emerald-800';
+        else if (String(inv.Status || '').includes('Part Paid')) statusBadge = 'bg-blue-100 text-blue-800';
+
+        return `
+          <tr class="hover:bg-gray-50 border-b text-xs">
+            <td class="p-2 font-mono">${inv.ID}</td>
+            <td class="p-2 font-semibold">${inv.ContainerNo}</td>
+            <td class="p-2">${inv.Type}</td>
+            <td class="p-2">${inv.BeneficiaryName}</td>
+            <td class="p-2 font-semibold text-blue-600">$${parseFloat(inv.Amount || 0).toFixed(2)}</td>
+            <td class="p-2"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${statusBadge}">${inv.Status || 'Unpaid'}</span></td>
+            <td class="p-2 text-right space-x-1">
+              <button onclick="editInvoiceRecord('${inv.ID}')" class="bg-amber-100 text-amber-800 hover:bg-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">✏️ Edit</button>
+              <button onclick="deleteInvoiceRecord('${inv.ID}')" class="bg-red-100 text-red-800 hover:bg-red-200 px-2 py-0.5 rounded text-[10px] font-bold">🗑️ Delete</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      document.getElementById("allInvoicesModalBody").innerHTML = `
+        <div class="space-y-3">
+          <div class="flex flex-col md:flex-row justify-between items-center gap-3">
+            <div class="bg-blue-50 border border-blue-200 p-3 rounded-lg flex-1 flex justify-between items-center">
+              <span class="text-xs text-blue-600 font-semibold">Total Invoiced Amount Across All Files</span>
+              <span class="text-lg font-bold text-blue-900">$${totalInvoiced.toFixed(2)}</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="openRecordInvoiceModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-semibold shadow">➕ Record New Invoice</button>
+              <input type="text" placeholder="🔍 Search all invoices..." oninput="filterTable(event, 'tbl_all_invoices')" class="border px-3 py-2 rounded text-xs outline-none w-full md:w-52">
+            </div>
+          </div>
+          <div class="bg-white rounded-lg border overflow-hidden max-h-[60vh] overflow-y-auto">
+            <table class="w-full text-left text-xs" id="tbl_all_invoices">
+              <thead>
+                <tr class="bg-gray-100 text-gray-500">
+                  <th class="p-2.5">ID</th>
+                  <th class="p-2.5">Container</th>
+                  <th class="p-2.5">Type</th>
+                  <th class="p-2.5">Beneficiary</th>
+                  <th class="p-2.5">Amount ($)</th>
+                  <th class="p-2.5">Status</th>
+                  <th class="p-2.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+                ${rows || '<tr><td colspan="7" class="p-4 text-center text-gray-400">No invoices recorded.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      document.getElementById("allInvoicesModal").classList.remove("hidden");
+    }
+
+    function closeAllInvoicesModal() {
+      document.getElementById("allInvoicesModal").classList.add("hidden");
+    }
+
+    function openAllPaymentsModal() {
+      const db = globalData || {};
+      const payments = db.ClearingPayments || [];
+      const totalPaid = payments.reduce((sum, p) => sum + (parseFloat(p.AmountPaid) || 0), 0);
+
+      let rows = payments.map(p => `
+        <tr class="hover:bg-gray-50 border-b text-xs">
+          <td class="p-2 font-mono">${p.ID}</td>
+          <td class="p-2">${p.Date || 'N/A'}</td>
+          <td class="p-2 font-semibold">${p.BeneficiaryName}</td>
+          <td class="p-2 font-semibold text-emerald-600">$${parseFloat(p.AmountPaid || 0).toFixed(2)}</td>
+          <td class="p-2">${p.InvoicesPaid || 'N/A'}</td>
+          <td class="p-2 text-right space-x-1">
+            <button onclick="downloadPaymentReceiptPDF('${p.ID}')" class="bg-blue-100 text-blue-800 hover:bg-blue-200 px-2 py-0.5 rounded text-[10px] font-bold">📥 Download</button>
+            <button onclick="editPaymentRecord('${p.ID}')" class="bg-amber-100 text-amber-800 hover:bg-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">✏️ Edit</button>
+            <button onclick="deletePaymentRecord('${p.ID}')" class="bg-red-100 text-red-800 hover:bg-red-200 px-2 py-0.5 rounded text-[10px] font-bold">🗑️ Delete</button>
+          </td>
+        </tr>
+      `).join('');
+
+      document.getElementById("allPaymentsModalBody").innerHTML = `
+        <div class="space-y-3">
+          <div class="flex flex-col md:flex-row justify-between items-center gap-3">
+            <div class="bg-emerald-50 border border-emerald-200 p-3 rounded-lg flex-1 flex justify-between items-center">
+              <span class="text-xs text-emerald-600 font-semibold">Total Payments Made Across All Files</span>
+              <span class="text-lg font-bold text-emerald-900">$${totalPaid.toFixed(2)}</span>
+            </div>
+            <input type="text" placeholder="🔍 Search all payments..." oninput="filterTable(event, 'tbl_all_payments')" class="border px-3 py-2 rounded text-xs outline-none w-full md:w-64">
+          </div>
+          <div class="bg-white rounded-lg border overflow-hidden max-h-[60vh] overflow-y-auto">
+            <table class="w-full text-left text-xs" id="tbl_all_payments">
+              <thead>
+                <tr class="bg-gray-100 text-gray-500">
+                  <th class="p-2.5">Pay ID</th>
+                  <th class="p-2.5">Date</th>
+                  <th class="p-2.5">Beneficiary</th>
+                  <th class="p-2.5">Paid ($)</th>
+                  <th class="p-2.5">Covered Invoices</th>
+                  <th class="p-2.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+                ${rows || '<tr><td colspan="6" class="p-4 text-center text-gray-400">No payments recorded.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      document.getElementById("allPaymentsModal").classList.remove("hidden");
+    }
+
+    function closeAllPaymentsModal() {
+      document.getElementById("allPaymentsModal").classList.add("hidden");
+    }
+
+    // --- PREVIEW DETAILS MODAL ---
+    function previewClearingDetails(id) {
+      currentActiveRecordId = id;
+      const item = (globalData.Clearing || []).find(x => String(x.ID) === String(id));
+      if (!item) return alert("Record not found.");
+
+      const total = (parseFloat(item.ClearingAmount) || 0) + 
+                    (parseFloat(item.TransportAmount) || 0) + 
+                    (parseFloat(item.StorageAmount) || 0) + 
+                    (parseFloat(item.RentAmount) || 0) + 
+                    (parseFloat(item.DemurrageAmount) || 0);
+
+      const attachments = Array.isArray(item.Attachments) ? item.Attachments : (item.AttachmentData ? [{name: item.AttachmentName || 'Document', data: item.AttachmentData}] : []);
+      
+      const attachmentSection = attachments.length > 0 ? `
+        <div class="bg-indigo-50 p-3 rounded-lg border border-indigo-200 space-y-2">
+          <span class="text-xs font-bold text-indigo-900 block">📎 Attached Documents (${attachments.length}):</span>
+          <div class="space-y-1">
+            ${attachments.map(att => `
+              <div class="flex justify-between items-center bg-white p-1.5 rounded border text-xs">
+                <span class="truncate max-w-[180px] font-medium">${att.name}</span>
+                <div class="flex items-center gap-2">
+                  <button onclick="previewSingleFile('${att.name}', '${att.data}', '${att.type || ''}')" class="bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded text-[11px]">Preview</button>
+                  <a href="${att.data}" download="${att.name}" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-0.5 rounded text-[11px]">Download</a>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : `<div class="bg-gray-50 p-2 rounded text-xs text-gray-400 italic">No documents attached to this clearing file.</div>`;
+
+      const storageNotesList = Array.isArray(item.StorageNotesList) ? item.StorageNotesList : (item.StorageNotes ? [item.StorageNotes] : []);
+      const rentNotesList = Array.isArray(item.RentNotesList) ? item.RentNotesList : (item.RentNotes ? [item.RentNotes] : []);
+      const demurrageNotesList = Array.isArray(item.DemurrageNotesList) ? item.DemurrageNotesList : (item.DemurrageNotes ? [item.DemurrageNotes] : []);
+
+      const modalHtml = `
+        <div id="printableClearingContent" class="space-y-3 text-sm text-gray-700 bg-white p-1">
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Container No:</span><span class="font-bold text-gray-900">📦 ${item.ContainerNo}</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">BL No / Size:</span><span class="font-semibold">${item.BLno} (${item.Size})</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Consignee / Client:</span><span class="font-semibold">${item.Consignee} / ${item.Client}</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Port & Destination:</span><span class="font-semibold">${item.Port} ➔ ${item.Destination}</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Transporter / Truck:</span><span class="font-semibold text-indigo-600">${item.Transporter || 'N/A'} (${item.Truck || 'N/A'})</span></div>
+          <div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Shipping Line(s):</span><span class="font-semibold">${item.ShippingLines || 'N/A'}</span></div>
+          
+          ${attachmentSection}
+
+          <div class="bg-slate-50 p-3 rounded-lg border space-y-1">
+            <p class="font-bold text-xs uppercase text-slate-700">💰 Financial Breakdown</p>
+            <div class="flex justify-between text-xs"><span>Clearing Amount:</span><span class="font-semibold">$${parseFloat(item.ClearingAmount || 0).toFixed(2)}</span></div>
+            <div class="flex justify-between text-xs"><span>Transport Amount:</span><span class="font-semibold">$${parseFloat(item.TransportAmount || 0).toFixed(2)}</span></div>
+            <div class="flex justify-between text-xs"><span>Storage Amount:</span><span class="font-semibold text-red-600">$${parseFloat(item.StorageAmount || 0).toFixed(2)}</span></div>
+            <div class="flex justify-between text-xs"><span>Warehouse Rent:</span><span class="font-semibold text-red-600">$${parseFloat(item.RentAmount || 0).toFixed(2)}</span></div>
+            <div class="flex justify-between text-xs"><span>Demurrage/Detention:</span><span class="font-semibold text-red-600">$${parseFloat(item.DemurrageAmount || 0).toFixed(2)}</span></div>
+            <div class="flex justify-between text-xs border-t pt-1 font-bold text-gray-950"><span>Total Expenses:</span><span>$${total.toFixed(2)}</span></div>
+          </div>
+
+          <div class="bg-gray-50 p-3 rounded-lg border space-y-2">
+            <p class="font-bold text-xs uppercase text-gray-700">📝 Charge Logs & Notes</p>
+            <div><span class="font-semibold text-xs text-gray-600">Storage Logs:</span> <ul class="list-disc pl-4 text-xs text-gray-800 bg-white p-1.5 rounded border mt-0.5">${storageNotesList.map(n => `<li>${n}</li>`).join('') || '<li>No notes.</li>'}</ul></div>
+            <div><span class="font-semibold text-xs text-gray-600">Warehouse Rent Logs:</span> <ul class="list-disc pl-4 text-xs text-gray-800 bg-white p-1.5 rounded border mt-0.5">${rentNotesList.map(n => `<li>${n}</li>`).join('') || '<li>No notes.</li>'}</ul></div>
+            <div><span class="font-semibold text-xs text-gray-600">Demurrage / Detention Logs:</span> <ul class="list-disc pl-4 text-xs text-gray-800 bg-white p-1.5 rounded border mt-0.5">${demurrageNotesList.map(n => `<li>${n}</li>`).join('') || '<li>No notes.</li>'}</ul></div>
+          </div>
+
+          ${renderInvoicesManagementSection(item.ID)}
+        </div>
+      `;
+
+      document.getElementById("modalTitle").innerHTML = `
+        <div class="flex justify-between items-center w-full">
+          <span>Clearing File: ${item.ContainerNo}</span>
+          <button onclick="printClearingModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition flex items-center gap-1">
+            🖨️ Print / Download PDF
+          </button>
+        </div>
+      `;
+      document.getElementById("modalBody").innerHTML = modalHtml;
+      document.getElementById("previewModal").classList.remove("hidden");
+    }
+
+    function printClearingModal() {
+      const printContents = document.getElementById("printableClearingContent").innerHTML;
+      const originalContents = document.body.innerHTML;
+
+      document.body.innerHTML = `
+        <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: auto;">
+          <h2 style="text-align: center; color: #1e3a8a; margin-bottom: 5px;">FLEETDESK - PORT CLEARING REPORT</h2>
+          <p style="text-align: center; font-size: 12px; color: #6b7280; margin-bottom: 20px;">Generated on: ${new Date().toLocaleString()}</p>
+          <hr style="border: 0; border-top: 1px solid #e5e7eb; margin-bottom: 20px;" />
+          ${printContents}
+        </div>
+      `;
+
+      window.print();
+      document.body.innerHTML = originalContents;
+      window.location.reload();
+    }
+
+    window.onEditTriggered = function(sheetName, item) {
+      if (sheetName === 'Clearing') openClearingFormModal(item);
+    };
+
+    fetchDatabase();
   </script>
 </body>
 </html>
