@@ -41,15 +41,17 @@ function saveSystemTheme(themeKey) {
   setTimeout(() => window.location.reload(), 500);
 }
 
-// Robust JSONP fetch function that bypasses browser CORS locks completely
+// Robust JSONP fetch function with localStorage fallback for connection resilience
 async function fetchDatabase(forceRefresh = false) {
   try {
-    const cachedData = sessionStorage.getItem("fleetDesk_db");
+    const cachedData = localStorage.getItem("fleetDesk_db") || sessionStorage.getItem("fleetDesk_db");
     if (!forceRefresh && cachedData) {
-      console.log("Loading data from session cache...");
+      console.log("Loading data from local cache...");
       globalData = JSON.parse(cachedData);
       
       if (!globalData.Trips) globalData.Trips = [];
+      if (!globalData.Tasks) globalData.Tasks = [];
+      if (!globalData.Users) globalData.Users = [];
 
       if (typeof window.onDataLoaded === "function") {
         window.onDataLoaded(globalData);
@@ -70,7 +72,11 @@ async function fetchDatabase(forceRefresh = false) {
         });
         
         if (!globalData.Trips) globalData.Trips = [];
+        if (!globalData.Tasks) globalData.Tasks = [];
+        if (!globalData.Users) globalData.Users = [];
 
+        // Save to both localStorage and sessionStorage for permanent fallback
+        localStorage.setItem("fleetDesk_db", JSON.stringify(globalData));
         sessionStorage.setItem("fleetDesk_db", JSON.stringify(globalData));
 
         if (typeof window.onDataLoaded === "function") {
@@ -91,24 +97,25 @@ async function fetchDatabase(forceRefresh = false) {
 
   } catch (err) {
     console.warn("JSONP fetch failed, falling back to local cache...", err);
-    const fallbackCache = sessionStorage.getItem("fleetDesk_db");
+    const fallbackCache = localStorage.getItem("fleetDesk_db") || sessionStorage.getItem("fleetDesk_db");
     if (fallbackCache) {
       globalData = JSON.parse(fallbackCache);
       if (!globalData.Trips) globalData.Trips = [];
+      if (!globalData.Tasks) globalData.Tasks = [];
+      if (!globalData.Users) globalData.Users = [];
       if (typeof window.onDataLoaded === "function") {
         window.onDataLoaded(globalData);
       }
       showNotification("Running on cached local data.", "error");
     } else {
-      globalData = { Trucks: [], Drivers: [], Containers: [], Invoices: [], Expenses: [], Users: [], Garage: [], Monitoring: [], Trailers: [], Combinations: [], Contacts: [], Cashbook: [], CashAccounts: [], Trips: [], Clearing: [] };
+      globalData = { Trucks: [], Drivers: [], Containers: [], Invoices: [], Expenses: [], Users: [], Garage: [], Monitoring: [], Trailers: [], Combinations: [], Contacts: [], Cashbook: [], CashAccounts: [], Trips: [], Clearing: [], Tasks: [] };
       if (typeof window.onDataLoaded === "function") {
         window.onDataLoaded(globalData);
       }
-      showNotification("Unable to connect to Google Sheets backend.", "error");
+      showNotification("Unable to connect to Google Sheets backend. Using empty local state.", "error");
     }
   }
 }
-
 
 async function triggerSyncWithLoading() {
   const syncBtn = document.getElementById("sync_btn");
@@ -145,12 +152,14 @@ async function sendToServer(sheetName, action, data) {
         globalData[sheetName][index] = { ...globalData[sheetName][index], ...data };
       }
     } else if (action === "delete") {
-      globalData[sheetName] = globalData[sheetName].filter(row => String(row.ID) !== String(data.id));
+      globalData[sheetName] = globalData[sheetName].filter(row => String(row.ID) !== String(data.id) && String(row.ID) !== String(data.ID));
     } else if (action === "archive") {
-      const item = globalData[sheetName].find(row => String(row.ID) === String(data.id));
+      const item = globalData[sheetName].find(row => String(row.ID) === String(data.id) || String(row.ID) === String(data.ID));
       if (item) item.Status = "Archived";
     }
 
+    // Persist immediately to local storage
+    localStorage.setItem("fleetDesk_db", JSON.stringify(globalData));
     sessionStorage.setItem("fleetDesk_db", JSON.stringify(globalData));
 
     if (typeof window.onDataLoaded === "function") {
@@ -158,9 +167,8 @@ async function sendToServer(sheetName, action, data) {
     }
     
     closeFormModal();
-    showNotification("Saving to Google Drive and Sheets...");
+    showNotification("Saving record locally & syncing to cloud...");
 
-    // Send payload to Apps Script using mode: "no-cors" to bypass local browser file security locks
     await fetch(SCRIPT_URL, {
       method: "POST",
       mode: "no-cors",
@@ -168,7 +176,6 @@ async function sendToServer(sheetName, action, data) {
       body: JSON.stringify({ sheet: sheetName, action: action, data: data })
     });
 
-    // Refresh database after 1.5s to pull transformed Google Drive preview links
     setTimeout(() => fetchDatabase(true), 1500);
 
   } catch (err) {
@@ -201,12 +208,13 @@ function toggleSidebar() {
 }
 
 function renderSidebar(activePage) {
-  const currentUser = JSON.parse(sessionStorage.getItem("fleetDesk_currentUser") || "{}");
+  const currentUser = checkAuth() || {};
   const isAdmin = currentUser.Username === "admin" || currentUser.IsMasterAdmin;
   const isCollapsed = localStorage.getItem("fleetDesk_sidebarCollapsed") === "true";
 
   const allPages = [
     { name: "Dashboard", file: "index.html", icon: "📊" },
+    { name: "Tasks", file: "tasks.html", icon: "📋" },
     { name: "Clearing", file: "clearing.html", icon: "⚓" },
     { name: "Trucks", file: "trucks.html", icon: "🚛" },
     { name: "Trailers", file: "trailers.html", icon: "🚃" },
@@ -246,7 +254,7 @@ function renderSidebar(activePage) {
           ${pages.map(p => {
             const isActive = activePage === p.name;
             return `
-              <a href="${p.file}" title="${p.name}" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${t.hoverBg} ${t.hoverText}${isActive ? `${t.activeBg} ${t.activeText} font-semibold` : ''}">
+              <a href="${p.file}" title="${p.name}" class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${t.hoverBg} ${t.hoverText}${isActive ? ` ${t.activeBg} ${t.activeText} font-semibold` : ''}">
                 <span class="text-base">${p.icon}</span>
                 <span class="sidebar-label ${isCollapsed ? 'hidden' : ''} whitespace-nowrap">${p.name}</span>
               </a>
@@ -260,7 +268,7 @@ function renderSidebar(activePage) {
           <p class="font-bold ${t.headingText} truncate max-w-[110px]">${currentUser.Name || currentUser.Username || 'User'}</p>
           <p class="${t.subText} truncate max-w-[110px]">${currentUser.Category || 'User'}</p>
         </div>
-        <button onclick="sessionStorage.clear(); window.location.href='login.html';" class="bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white p-2 rounded-lg transition font-semibold" title="Sign Out">
+        <button onclick="sessionStorage.clear(); localStorage.removeItem('fleetDesk_currentUser'); window.location.href='login.html';" class="bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white p-2 rounded-lg transition font-semibold" title="Sign Out">
           🚪
         </button>
       </div>
@@ -507,7 +515,7 @@ function showNotification(message, type = "success") {
 }
 
 (function enforceAuth() {
-  const currentUser = sessionStorage.getItem("fleetDesk_currentUser");
+  const currentUser = sessionStorage.getItem("fleetDesk_currentUser") || localStorage.getItem("fleetDesk_currentUser");
   const path = window.location.pathname;
   const isLoginPage = path.includes("login.html") || window.location.href.includes("login.html");
 
@@ -517,8 +525,23 @@ function showNotification(message, type = "success") {
 })();
 
 function checkAuth() {
-  const currentUser = sessionStorage.getItem("fleetDesk_currentUser");
-  return currentUser ? JSON.parse(currentUser) : null;
+  const currentUserStr = sessionStorage.getItem("fleetDesk_currentUser") || localStorage.getItem("fleetDesk_currentUser");
+  if (!currentUserStr) return null;
+  const user = JSON.parse(currentUserStr);
+  
+  // Dynamically update user permissions from cached database if available
+  if (user.Username !== "admin" && !user.IsMasterAdmin) {
+    try {
+      const db = (globalData && globalData.Users) ? globalData : JSON.parse(localStorage.getItem("fleetDesk_db") || "{}");
+      const latestUser = (db.Users || []).find(u => String(u.Username).toLowerCase() === String(user.Username).toLowerCase());
+      if (latestUser) {
+        user.Permissions = latestUser.Permissions;
+        user.Category = latestUser.Category;
+        user.Name = latestUser.Name;
+      }
+    } catch(e) {}
+  }
+  return user;
 }
 
 function renderUserHeaderBadge() {
@@ -538,6 +561,14 @@ function hasPermission(moduleName) {
   const user = checkAuth();
   if (!user) return false;
   if (user.Username === "admin" || user.IsMasterAdmin) return true;
-  const permissions = user.Permissions || [];
-  return permissions.includes(moduleName) || permissions.includes("All");
+  
+  let permissions = user.Permissions || [];
+  if (typeof permissions === 'string') {
+    try { permissions = JSON.parse(permissions); } catch(e) { permissions = []; }
+  }
+
+  // Matches direct module names ("Clearing"), full privileges ("All"), or granular actions ("Clearing:View")
+  return permissions.includes("All") || 
+         permissions.includes(moduleName) || 
+         permissions.some(p => p === moduleName || p.startsWith(moduleName + ":"));
 }
