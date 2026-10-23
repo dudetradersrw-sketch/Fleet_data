@@ -2,116 +2,99 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>FleetDesk - Login</title>
+  <title>FleetDesk - Sign In</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="app.js"></script>
 </head>
-<body class="bg-slate-900 font-sans flex items-center justify-center h-screen">
-  <div class="bg-white rounded-2xl max-w-md w-full p-8 shadow-2xl relative">
-    <div class="text-center mb-6">
-      <div class="bg-blue-600 text-white font-bold p-3 rounded-2xl text-2xl inline-block mb-2">🚚</div>
-      <h1 class="text-2xl font-bold text-gray-800">FleetDesk Login</h1>
-      <p class="text-xs text-gray-400">Enter your credentials to access operations</p>
+<body class="bg-gradient-to-br from-slate-900 to-slate-800 font-sans flex items-center justify-center h-screen">
+  <div class="bg-white rounded-2xl max-w-md w-full p-8 shadow-2xl space-y-6">
+    <div class="text-center space-y-2">
+      <div class="text-4xl">🚚</div>
+      <h1 class="text-2xl font-bold text-gray-800">FleetDesk Portal</h1>
+      <p class="text-xs text-gray-500">Sign in using your assigned credentials</p>
     </div>
 
-    <form onsubmit="handleLogin(event)" class="space-y-4">
+    <form onsubmit="handleUserLogin(event)" class="space-y-4">
       <div>
         <label class="text-xs font-semibold text-gray-600 block mb-1">Username</label>
-        <input type="text" id="loginUser" required class="border p-3 rounded-xl w-full text-sm outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter username">
+        <input type="text" id="loginUsername" required placeholder="Enter username" class="border p-3 rounded-lg w-full text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
       </div>
-
       <div>
         <label class="text-xs font-semibold text-gray-600 block mb-1">Password</label>
-        <input type="password" id="loginPass" required class="border p-3 rounded-xl w-full text-sm outline-none focus:ring-2 focus:ring-blue-500" placeholder="••••••••">
+        <input type="password" id="loginPassword" required placeholder="••••••••" class="border p-3 rounded-lg w-full text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
       </div>
-
-      <button type="submit" id="loginBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition shadow-lg">
-        Sign In
+      <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-bold text-sm transition shadow-lg">
+        Sign In to FleetDesk
       </button>
     </form>
     
-    <div id="loginError" class="mt-4 text-center text-xs text-red-600 font-semibold hidden"></div>
+    <div class="text-center text-[11px] text-gray-400">
+      Protected Logistics & Port Clearing System
+    </div>
   </div>
 
   <script>
-    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyABP4xsGbLluzADJhotyT5e4SSnp_WYC2DlfpMC56PJx8MQaN-IcHk_bfbZAocVMsb_Q/exec";
+    // Try syncing in background, but do not block login if offline
+    window.addEventListener('DOMContentLoaded', () => {
+      if (typeof fetchDatabase === 'function') {
+        fetchDatabase().catch(() => console.log("Offline mode: using local user cache."));
+      }
+    });
 
-    function handleLogin(e) {
+    function handleUserLogin(e) {
       e.preventDefault();
-      const usernameInput = document.getElementById("loginUser").value.trim();
-      const passwordInput = document.getElementById("loginPass").value.trim();
-      const errorDiv = document.getElementById("loginError");
-      const btn = document.getElementById("loginBtn");
+      const uInput = document.getElementById("loginUsername").value.trim();
+      const pInput = document.getElementById("loginPassword").value.trim();
 
-      errorDiv.classList.add("hidden");
-      btn.innerText = "Authenticating...";
-      btn.disabled = true;
-
-      // Master Admin Hardcoded Fallback Check
-      if (usernameInput === "admin" && passwordInput === "admin@ndikumwe.com") {
+      // 1. Master Admin Fallback Check
+      if (uInput.toLowerCase() === "admin" && (pInput === "admin" || pInput === "Fleet2026@")) {
         const adminUser = {
-          ID: "ADMIN-01",
-          Name: "Master Admin",
           Username: "admin",
+          Name: "System Administrator",
           Category: "Administrator",
           IsMasterAdmin: true,
           Permissions: ["All"]
         };
+        localStorage.setItem("fleetDesk_currentUser", JSON.stringify(adminUser));
         sessionStorage.setItem("fleetDesk_currentUser", JSON.stringify(adminUser));
-        window.location.href = "index.html";
+        
+        if (typeof showNotification === 'function') {
+          showNotification("Admin login successful!", "success");
+        }
+        setTimeout(() => { window.location.href = "index.html"; }, 600);
         return;
       }
 
-      // Fetch users database via JSONP to check credentials securely without CORS blocks
-      const callbackName = 'jsonp_login_' + Math.round(100000 * Math.random());
-      window[callbackName] = function(parsedData) {
-        delete window[callbackName];
-        if (script.parentNode) script.parentNode.removeChild(script);
+      // 2. Load users from localStorage cache (ensures offline users can log in)
+      let usersList = [];
+      try {
+        const savedDb = JSON.parse(localStorage.getItem("fleetDesk_db") || "{}");
+        usersList = savedDb.Users || [];
+      } catch (err) {
+        usersList = [];
+      }
 
-        const users = parsedData.Users || [];
-        const matchedUser = users.find(u => 
-          String(u.Username).trim().toLowerCase() === usernameInput.toLowerCase() && 
-          String(u.Password).trim() === passwordInput
-        );
+      // Fallback to globalData if available
+      if (usersList.length === 0 && typeof globalData !== 'undefined' && globalData.Users) {
+        usersList = globalData.Users;
+      }
 
-        if (matchedUser) {
-          // Parse permissions if stored as JSON string
-          let perms = [];
-          try {
-            perms = typeof matchedUser.Permissions === 'string' ? JSON.parse(matchedUser.Permissions || '[]') : (matchedUser.Permissions || []);
-          } catch(err) {
-            perms = [];
-          }
+      // Find user matching username and password
+      const matchedUser = usersList.find(u => 
+        String(u.Username).toLowerCase() === uInput.toLowerCase() && String(u.Password) === pInput
+      );
 
-          const userSession = {
-            ID: matchedUser.ID,
-            Name: matchedUser.Name || matchedUser.Username,
-            Username: matchedUser.Username,
-            Category: matchedUser.Category || "Standard User",
-            IsMasterAdmin: false,
-            Permissions: perms
-          };
-
-          sessionStorage.setItem("fleetDesk_currentUser", JSON.stringify(userSession));
-          window.location.href = "index.html";
-        } else {
-          btn.innerText = "Sign In";
-          btn.disabled = false;
-          errorDiv.innerText = "Invalid username or password. Please try again.";
-          errorDiv.classList.remove("hidden");
+      if (matchedUser) {
+        localStorage.setItem("fleetDesk_currentUser", JSON.stringify(matchedUser));
+        sessionStorage.setItem("fleetDesk_currentUser", JSON.stringify(matchedUser));
+        
+        if (typeof showNotification === 'function') {
+          showNotification(`Welcome back, ${matchedUser.Name || matchedUser.Username}!`, "success");
         }
-      };
-
-      const script = document.createElement('script');
-      script.src = `${SCRIPT_URL}?callback=${callbackName}`;
-      script.onerror = function() {
-        delete window[callbackName];
-        if (script.parentNode) script.parentNode.removeChild(script);
-        btn.innerText = "Sign In";
-        btn.disabled = false;
-        errorDiv.innerText = "Login connection error: Failed to reach Google Sheets backend.";
-        errorDiv.classList.remove("hidden");
-      };
-      document.body.appendChild(script);
+        setTimeout(() => { window.location.href = "index.html"; }, 800);
+      } else {
+        alert("Invalid username or password. Please check your credentials or create the user in User Management.");
+      }
     }
   </script>
 </body>
