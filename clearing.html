@@ -5,6 +5,7 @@
   <title>FleetDesk - Port Clearing & Logistics</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
   <script src="app.js"></script>
 </head>
 <body class="bg-gray-100 font-sans flex h-screen overflow-hidden">
@@ -62,9 +63,9 @@
 
   <!-- 💵 Invoice Payment Modal -->
   <div id="invoicePaymentModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden" onclick="if(event.target === this) closeInvoicePaymentModal()">
-    <div class="bg-white rounded-xl max-w-3xl w-full p-6 shadow-xl relative max-h-[90vh] overflow-y-auto">
+    <div class="bg-white rounded-xl max-w-5xl w-full p-6 shadow-xl relative max-h-[92vh] overflow-y-auto">
       <button onclick="closeInvoicePaymentModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
-      <h3 class="text-xl font-bold text-gray-800 mb-2 border-b pb-2">Custom Invoice Payment Allocation</h3>
+      <h3 class="text-xl font-bold text-gray-800 mb-2 border-b pb-2">Record Unified Payment Transaction</h3>
       <div id="invoicePaymentBody" class="space-y-4 pt-2"></div>
     </div>
   </div>
@@ -82,8 +83,35 @@
   <div id="allPaymentsModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden" onclick="if(event.target === this) closeAllPaymentsModal()">
     <div class="bg-white rounded-xl max-w-5xl w-full p-6 shadow-xl relative max-h-[90vh] overflow-y-auto">
       <button onclick="closeAllPaymentsModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
-      <h3 class="text-xl font-bold text-gray-800 mb-2 border-b pb-2">All Payment Records</h3>
+      <h3 class="text-xl font-bold text-gray-800 mb-2 border-b pb-2">All Payment Transactions (Clickable)</h3>
       <div id="allPaymentsModalBody" class="space-y-4 pt-2"></div>
+    </div>
+  </div>
+
+  <!-- 🔍 Single Invoice Payment History / Transaction Details Drilldown Modal -->
+  <div id="invoiceHistoryModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden" onclick="if(event.target === this) closeInvoiceHistoryModal()">
+    <div class="bg-white rounded-xl max-w-3xl w-full p-6 shadow-xl relative max-h-[90vh] overflow-y-auto">
+      <button onclick="closeInvoiceHistoryModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
+      <h3 id="invoiceHistoryTitle" class="text-xl font-bold text-gray-800 mb-2 border-b pb-2">Payment Details</h3>
+      <div id="invoiceHistoryBody" class="space-y-4 pt-2"></div>
+    </div>
+  </div>
+
+  <!-- 📋 Generic Form Modal (Add/Edit Clearing File & Invoices) -->
+  <div id="formModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden" onclick="if(event.target === this) closeFormModal()">
+    <div class="bg-white rounded-xl max-w-2xl w-full p-6 shadow-xl relative max-h-[92vh] overflow-y-auto">
+      <button onclick="closeFormModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
+      <h3 id="formModalTitle" class="text-xl font-bold text-gray-800 mb-3 border-b pb-2">Form</h3>
+      <div id="formModalBody"></div>
+    </div>
+  </div>
+
+  <!-- 👁️ Clearing Preview Modal -->
+  <div id="previewModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center hidden" onclick="if(event.target === this) closePreviewModal()">
+    <div class="bg-white rounded-xl max-w-4xl w-full p-6 shadow-xl relative max-h-[92vh] overflow-y-auto">
+      <button onclick="closePreviewModal()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 font-bold text-xl">&times;</button>
+      <h3 id="modalTitle" class="text-xl font-bold text-gray-800 mb-3 border-b pb-2">Clearing File Details</h3>
+      <div id="modalBody"></div>
     </div>
   </div>
 
@@ -95,8 +123,49 @@
     let currentActiveRecordId = null;
     let formModalActiveFiles = [];
     let invoiceExtraChargesList = [];
+    let selectedInvoiceStatuses = [];
 
-    // --- FINANCIAL HELPER FOR INVOICES (REMEMBERING PAYMENTS & TRANSACTION IDs) ---
+    function esc(val) {
+      if (!val) return '';
+      return String(val).replace(/'/g, "&#39;").replace(/"/g, '&quot;');
+    }
+
+    // --- FINANCIAL & PAYMENT CALCULATOR (EXACT ALLOCATED AMOUNT) ---
+    function calculateInvoicePaidAmount(invoiceId) {
+      const db = globalData || {};
+      const payments = db.ClearingPayments || [];
+      let totalPaid = 0;
+      let txList = [];
+
+      payments.forEach(function(p) {
+        let matchedAmount = 0;
+        
+        if (Array.isArray(p.Allocations) && p.Allocations.length > 0) {
+          const alloc = p.Allocations.find(function(a) { return String(a.invoiceId) === String(invoiceId); });
+          if (alloc) {
+            matchedAmount = parseFloat(alloc.amount) || 0;
+          }
+        }
+        
+        if (matchedAmount === 0 && p.InvoicesPaid) {
+          const regex = new RegExp(invoiceId + '\\s*\\(\\$([0-9.]+)\\)', 'i');
+          const match = p.InvoicesPaid.match(regex);
+          if (match && match[1]) {
+            matchedAmount = parseFloat(match[1]) || 0;
+          } else if (String(p.InvoiceID || '') === String(invoiceId)) {
+            matchedAmount = parseFloat(p.AmountPaid) || 0;
+          }
+        }
+
+        if (matchedAmount > 0) {
+          totalPaid += matchedAmount;
+          txList.push({ paymentId: p.ID, amount: matchedAmount, date: p.Date, beneficiary: p.BeneficiaryName });
+        }
+      });
+
+      return { totalPaid: totalPaid, txList: txList };
+    }
+
     function getInvoiceFinancials(inv, allExtraCharges) {
       allExtraCharges = allExtraCharges || globalData.ClearingExtraCharges || [];
       const invCharges = allExtraCharges.filter(function(ec) { return String(ec.InvoiceID) === String(inv.ID); });
@@ -105,43 +174,46 @@
 
       const grandTotal = (parseFloat(inv.Amount) || 0) + extraChargesTotal;
       
-      let alreadyPaid = 0;
-      if (Array.isArray(inv.PaymentRecords) && inv.PaymentRecords.length > 0) {
-        inv.PaymentRecords.forEach(function(pr) {
-          alreadyPaid += (parseFloat(pr.amount) || 0);
-        });
-      } else if (typeof inv.PaidAmount !== 'undefined' && !isNaN(inv.PaidAmount)) {
-        alreadyPaid = parseFloat(inv.PaidAmount) || 0;
-      } else if (inv.Status === 'Fully Paid') {
+      const paymentData = calculateInvoicePaidAmount(inv.ID);
+      let alreadyPaid = paymentData.totalPaid;
+      if (alreadyPaid === 0 && inv.Status === 'Fully Paid') {
         alreadyPaid = grandTotal;
-      } else {
-        alreadyPaid = 0;
       }
 
-      alreadyPaid = Math.min(grandTotal, Math.max(0, alreadyPaid));
-      const remainingDue = Math.max(0, grandTotal - alreadyPaid);
-
+      const diff = alreadyPaid - grandTotal;
+      let remainingDue = 0;
+      let overpaidAmount = 0;
       let statusLabel = 'Unpaid';
-      if (remainingDue === 0 && grandTotal > 0) {
+
+      if (diff > 0.005) {
+        overpaidAmount = diff;
+        statusLabel = 'Overpaid';
+        remainingDue = 0;
+      } else if (Math.abs(grandTotal - alreadyPaid) <= 0.005 && grandTotal > 0) {
         statusLabel = 'Fully Paid';
+        remainingDue = 0;
       } else if (alreadyPaid > 0) {
         statusLabel = 'Part Paid';
+        remainingDue = Math.max(0, grandTotal - alreadyPaid);
+      } else {
+        remainingDue = grandTotal;
+        statusLabel = 'Unpaid';
       }
 
       return {
         grandTotal: grandTotal,
         alreadyPaid: alreadyPaid,
         remainingDue: remainingDue,
+        overpaidAmount: overpaidAmount,
         extraChargesTotal: extraChargesTotal,
         invCharges: invCharges,
         statusLabel: statusLabel,
-        paymentRecords: inv.PaymentRecords || []
+        txList: paymentData.txList
       };
     }
 
-    // --- CLOSE ALL MODALS HELPER ---
     function closeAllModals() {
-      const modals = ['filesModal', 'filePreviewModal', 'quickNotesModal', 'invoicePaymentModal', 'allInvoicesModal', 'allPaymentsModal', 'previewModal', 'formModal'];
+      const modals = ['filesModal', 'filePreviewModal', 'quickNotesModal', 'invoicePaymentModal', 'allInvoicesModal', 'allPaymentsModal', 'invoiceHistoryModal', 'previewModal', 'formModal'];
       modals.forEach(function(mId) {
         const el = document.getElementById(mId);
         if (el) el.classList.add('hidden');
@@ -149,26 +221,199 @@
       currentActiveRecordId = null;
     }
 
-    // --- ACTION CELL HELPER ---
+    function closeFormModal() {
+      document.getElementById("formModal").classList.add("hidden");
+    }
+
+    function closePreviewModal() {
+      document.getElementById("previewModal").classList.add("hidden");
+    }
+
+    function closeInvoiceHistoryModal() {
+      document.getElementById("invoiceHistoryModal").classList.add("hidden");
+    }
+
+    // --- ADD / EDIT PORT CLEARING FILE FORM MODAL ---
+    function openClearingFormModal(itemToEdit) {
+      closeAllModals();
+      itemToEdit = itemToEdit || null;
+
+      const html = '<form onsubmit="submitClearingForm(event)" class="space-y-3 max-h-[75vh] overflow-y-auto px-1 text-xs">' +
+        '<input type="hidden" id="clear_edit_id" value="' + (itemToEdit ? esc(itemToEdit.ID) : '') + '">' +
+        '<div class="grid grid-cols-2 gap-2">' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Container No *</label><input type="text" id="clear_containerNo" value="' + (itemToEdit ? esc(itemToEdit.ContainerNo) : '') + '" required class="border p-2 rounded w-full outline-none bg-white font-bold"></div>' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">BL No</label><input type="text" id="clear_blno" value="' + (itemToEdit ? esc(itemToEdit.BLno) : '') + '" class="border p-2 rounded w-full outline-none bg-white"></div>' +
+        '</div>' +
+        '<div class="grid grid-cols-2 gap-2">' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Consignee</label><input type="text" id="clear_consignee" value="' + (itemToEdit ? esc(itemToEdit.Consignee) : '') + '" class="border p-2 rounded w-full outline-none bg-white"></div>' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Client *</label><input type="text" id="clear_client" value="' + (itemToEdit ? esc(itemToEdit.Client) : '') + '" required class="border p-2 rounded w-full outline-none bg-white"></div>' +
+        '</div>' +
+        '<div class="grid grid-cols-3 gap-2">' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Size</label><input type="text" id="clear_size" value="' + (itemToEdit ? esc(itemToEdit.Size) : '') + '" placeholder="e.g. 40FT / 20FT" class="border p-2 rounded w-full outline-none bg-white"></div>' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Port</label><input type="text" id="clear_port" value="' + (itemToEdit ? esc(itemToEdit.Port) : '') + '" class="border p-2 rounded w-full outline-none bg-white"></div>' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Destination</label><input type="text" id="clear_destination" value="' + (itemToEdit ? esc(itemToEdit.Destination) : '') + '" class="border p-2 rounded w-full outline-none bg-white"></div>' +
+        '</div>' +
+        '<div class="grid grid-cols-3 gap-2">' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Rec. Docs Date</label><input type="date" id="clear_recDocs" value="' + (itemToEdit ? esc(itemToEdit.RecDocs) : '') + '" class="border p-2 rounded w-full outline-none bg-white"></div>' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Sent Agent Date</label><input type="date" id="clear_sentAgent" value="' + (itemToEdit ? esc(itemToEdit.SentAgent) : '') + '" class="border p-2 rounded w-full outline-none bg-white"></div>' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">ETA Date</label><input type="date" id="clear_eta" value="' + (itemToEdit ? esc(itemToEdit.ETA) : '') + '" class="border p-2 rounded w-full outline-none bg-white"></div>' +
+        '</div>' +
+        '<div class="grid grid-cols-3 gap-2">' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Offloaded Date</label><input type="date" id="clear_offloaded" value="' + (itemToEdit ? esc(itemToEdit.Offloaded) : '') + '" class="border p-2 rounded w-full outline-none bg-white"></div>' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Transporter</label><input type="text" id="clear_transporter" value="' + (itemToEdit ? esc(itemToEdit.Transporter) : '') + '" class="border p-2 rounded w-full outline-none bg-white"></div>' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Truck/Combo</label><input type="text" id="clear_truck" value="' + (itemToEdit ? esc(itemToEdit.Truck) : '') + '" class="border p-2 rounded w-full outline-none bg-white"></div>' +
+        '</div>' +
+        '<div class="grid grid-cols-3 gap-2">' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Clearing ($)</label><input type="number" step="0.01" id="clear_clearingAmount" value="' + (itemToEdit ? itemToEdit.ClearingAmount || 0 : '') + '" class="border p-2 rounded w-full outline-none bg-white font-bold text-blue-600"></div>' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Transport ($)</label><input type="number" step="0.01" id="clear_transportAmount" value="' + (itemToEdit ? itemToEdit.TransportAmount || 0 : '') + '" class="border p-2 rounded w-full outline-none bg-white font-bold text-emerald-600"></div>' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Storage ($)</label><input type="number" step="0.01" id="clear_storageAmount" value="' + (itemToEdit ? itemToEdit.StorageAmount || 0 : '') + '" class="border p-2 rounded w-full outline-none bg-white font-bold text-red-600"></div>' +
+        '</div>' +
+        '<div class="grid grid-cols-2 gap-2">' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Warehouse Rent ($)</label><input type="number" step="0.01" id="clear_rentAmount" value="' + (itemToEdit ? itemToEdit.RentAmount || 0 : '') + '" class="border p-2 rounded w-full outline-none bg-white font-bold text-red-600"></div>' +
+          '<div><label class="font-semibold text-gray-500 block mb-1">Demurrage ($)</label><input type="number" step="0.01" id="clear_demurrageAmount" value="' + (itemToEdit ? itemToEdit.DemurrageAmount || 0 : '') + '" class="border p-2 rounded w-full outline-none bg-white font-bold text-red-600"></div>' +
+        '</div>' +
+        '<div><label class="font-semibold text-gray-500 block mb-1">Shipping Lines / Agent Name</label><input type="text" id="clear_shippingLines" value="' + (itemToEdit ? esc(itemToEdit.ShippingLines || itemToEdit.AgentName || '') : '') + '" class="border p-2 rounded w-full outline-none bg-white"></div>' +
+        '<button type="submit" class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition shadow">' + (itemToEdit ? 'Update Clearing File' : 'Save Clearing File') + '</button>' +
+      '</form>';
+
+      document.getElementById("formModalTitle").innerText = itemToEdit ? "Edit Clearing File: " + esc(itemToEdit.ContainerNo) : "Add New Port Clearing File";
+      document.getElementById("formModalBody").innerHTML = html;
+      document.getElementById("formModal").classList.remove("hidden");
+    }
+
+    async function submitClearingForm(e) {
+      e.preventDefault();
+      const editId = document.getElementById("clear_edit_id").value;
+      const clearingId = editId || ("CLR-" + Date.now().toString().slice(-4));
+
+      const clearingData = {
+        ID: clearingId,
+        ContainerNo: document.getElementById("clear_containerNo").value,
+        BLno: document.getElementById("clear_blno").value,
+        Consignee: document.getElementById("clear_consignee").value,
+        Client: document.getElementById("clear_client").value,
+        Size: document.getElementById("clear_size").value,
+        Port: document.getElementById("clear_port").value,
+        Destination: document.getElementById("clear_destination").value,
+        RecDocs: document.getElementById("clear_recDocs").value,
+        SentAgent: document.getElementById("clear_sentAgent").value,
+        ETA: document.getElementById("clear_eta").value,
+        Offloaded: document.getElementById("clear_offloaded").value,
+        Transporter: document.getElementById("clear_transporter").value,
+        Truck: document.getElementById("clear_truck").value,
+        ClearingAmount: parseFloat(document.getElementById("clear_clearingAmount").value) || 0,
+        TransportAmount: parseFloat(document.getElementById("clear_transportAmount").value) || 0,
+        StorageAmount: parseFloat(document.getElementById("clear_storageAmount").value) || 0,
+        RentAmount: parseFloat(document.getElementById("clear_rentAmount").value) || 0,
+        DemurrageAmount: parseFloat(document.getElementById("clear_demurrageAmount").value) || 0,
+        ShippingLines: document.getElementById("clear_shippingLines").value
+      };
+
+      if (!globalData.Clearing) globalData.Clearing = [];
+      await sendToServer("Clearing", editId ? "update" : "add", clearingData);
+      closeFormModal();
+      if (typeof showNotification === 'function') showNotification("Port clearing file saved successfully!");
+      if (typeof fetchDatabase === 'function') fetchDatabase(true);
+    }
+
+    // --- CLICKABLE INVOICE DRILLDOWN ---
+    function openInvoicePaymentHistory(invId) {
+      closeAllModals();
+      const db = globalData || {};
+      const inv = (db.ClearingInvoices || []).find(function(x) { return String(x.ID) === String(invId); });
+      if (!inv) return alert("Invoice not found.");
+
+      const fin = getInvoiceFinancials(inv, db.ClearingExtraCharges || []);
+      document.getElementById("invoiceHistoryTitle").innerText = "Payment History for Invoice: " + inv.ID + " (" + inv.ContainerNo + ")";
+
+      let rows = fin.txList.map(function(tx) {
+        return '<tr class="border-b text-xs cursor-pointer hover:bg-gray-50" onclick="openPaymentTransactionDetails(\'' + esc(tx.paymentId) + '\')">' +
+          '<td class="p-2.5 font-mono font-bold text-indigo-700">' + esc(tx.paymentId) + '</td>' +
+          '<td class="p-2.5">' + esc(tx.date || 'N/A') + '</td>' +
+          '<td class="p-2.5">' + esc(tx.beneficiary || 'N/A') + '</td>' +
+          '<td class="p-2.5 font-semibold text-emerald-600">$' + parseFloat(tx.amount).toFixed(2) + '</td>' +
+        '</tr>';
+      }).join('');
+
+      document.getElementById("invoiceHistoryBody").innerHTML = '<div class="space-y-3">' +
+        '<div class="grid grid-cols-3 gap-2 bg-gray-50 p-3 rounded-lg border text-xs">' +
+          '<div><b>Beneficiary:</b> ' + esc(inv.BeneficiaryName) + '</div>' +
+          '<div><b>Total Amount:</b> $' + fin.grandTotal.toFixed(2) + '</div>' +
+          '<div><b>Total Paid:</b> <span class="text-emerald-700 font-bold">$' + fin.alreadyPaid.toFixed(2) + '</span></div>' +
+        '</div>' +
+        '<div class="bg-white rounded-lg border overflow-hidden">' +
+          '<table class="w-full text-left text-xs">' +
+            '<thead><tr class="bg-gray-100 text-gray-500">' +
+              '<th class="p-2.5">Transaction ID</th><th class="p-2.5">Date</th><th class="p-2.5">Beneficiary</th><th class="p-2.5">Exact Amount Paid ($)</th>' +
+            '</tr></thead>' +
+            '<tbody class="divide-y">' + (rows || '<tr><td colspan="4" class="p-4 text-center text-gray-400">No payment records found for this invoice.</td></tr>') + '</tbody>' +
+          '</table>' +
+        '</div>' +
+      '</div>';
+
+      document.getElementById("invoiceHistoryModal").classList.remove("hidden");
+    }
+
+    // --- CLICKABLE PAYMENT TRANSACTION DETAILS ---
+    function openPaymentTransactionDetails(paymentId) {
+      closeAllModals();
+      const db = globalData || {};
+      const p = (db.ClearingPayments || []).find(function(item) {
+        return String(item.ID) === String(paymentId);
+      });
+      if (!p) return alert("Payment transaction not found.");
+
+      let allocations = p.Allocations || [];
+      if (allocations.length === 0 && p.InvoiceID) {
+        allocations = [{ invoiceId: p.InvoiceID, amount: p.AmountPaid }];
+      }
+
+      let rows = allocations.map(function(a) {
+        return '<tr class="border-b text-xs">' +
+          '<td class="p-2.5 font-mono font-bold text-blue-600"><button onclick="openInvoicePaymentHistory(\'' + esc(a.invoiceId) + '\')" class="hover:underline text-blue-700 font-bold">' + esc(a.invoiceId) + '</button></td>' +
+          '<td class="p-2.5 font-semibold text-emerald-600">$' + parseFloat(a.amount || 0).toFixed(2) + '</td>' +
+        '</tr>';
+      }).join('');
+
+      document.getElementById("invoiceHistoryTitle").innerText = "Transaction Details: " + p.ID;
+      document.getElementById("invoiceHistoryBody").innerHTML = '<div class="space-y-3">' +
+        '<div class="grid grid-cols-3 gap-2 bg-gray-50 p-3 rounded-lg border text-xs">' +
+          '<div><b>Transaction ID:</b> ' + esc(p.ID) + '</div>' +
+          '<div><b>Date:</b> ' + esc(p.Date) + '</div>' +
+          '<div><b>Total Transaction Paid:</b> <span class="text-emerald-700 font-bold">$' + parseFloat(p.AmountPaid || 0).toFixed(2) + '</span></div>' +
+        '</div>' +
+        '<div class="text-xs text-gray-600"><b>Beneficiary:</b> ' + esc(p.BeneficiaryName) + '</div>' +
+        '<h4 class="font-bold text-xs text-gray-700 uppercase border-t pt-2">Exact Invoices Paid Under This Transaction:</h4>' +
+        '<div class="bg-white rounded-lg border overflow-hidden">' +
+          '<table class="w-full text-left text-xs">' +
+            '<thead><tr class="bg-gray-100 text-gray-500">' +
+              '<th class="p-2.5">Invoice ID</th><th class="p-2.5">Exact Amount Paid ($)</th>' +
+            '</tr></thead>' +
+            '<tbody class="divide-y">' + (rows || '<tr><td colspan="2" class="p-4 text-center text-gray-400">No allocations found.</td></tr>') + '</tbody>' +
+          '</table>' +
+        '</div>' +
+      '</div>';
+      document.getElementById("invoiceHistoryModal").classList.remove("hidden");
+    }
+
     function renderClearingActionCell(sheetName, item) {
       const id = item.ID;
       const attachments = Array.isArray(item.Attachments) ? item.Attachments : (item.AttachmentData ? [1] : []);
       const count = attachments.length;
 
       return '<div class="inline-block relative text-left">' +
-        '<button onclick="toggleActionDropdown(\'' + id + '\')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded text-xs font-semibold transition border">Actions ▼</button>' +
-        '<div id="actionMenu_' + id + '" class="hidden absolute right-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-xl z-20 py-1 text-left text-xs flex flex-col space-y-0.5">' +
-          '<button onclick="editRecord(\'' + sheetName + '\', \'' + id + '\')" class="w-full text-left px-3 py-1.5 hover:bg-amber-50 text-amber-800 font-medium">✏️ Edit</button>' +
-          '<button onclick="previewClearingDetails(\'' + id + '\')" class="w-full text-left px-3 py-1.5 hover:bg-blue-50 text-blue-800 font-medium">👁️ Preview</button>' +
-          '<button onclick="openFilesModal(\'' + id + '\')" class="w-full text-left px-3 py-1.5 hover:bg-indigo-50 text-indigo-800 font-medium flex justify-between items-center"><span>📁 Files (' + count + ')</span><span class="text-[10px] bg-indigo-100 text-indigo-800 px-1.5 rounded-full">Manage</span></button>' +
-          '<button onclick="downloadReceipt(\'' + sheetName + '\', \'' + id + '\')" class="w-full text-left px-3 py-1.5 hover:bg-indigo-50 text-indigo-800 font-medium">📄 Download Receipt</button>' +
-          '<button onclick="archiveRecord(\'' + sheetName + '\', \'' + id + '\')" class="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-800 font-medium">📦 Archive</button>' +
-          '<button onclick="deleteRecord(\'' + sheetName + '\', \'' + id + '\')" class="w-full text-left px-3 py-1.5 hover:bg-red-50 text-red-800 font-medium border-t">🗑️ Delete</button>' +
+        '<button onclick="toggleActionDropdown(\'' + esc(id) + '\')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded text-xs font-semibold transition border">Actions ▼</button>' +
+        '<div id="actionMenu_' + esc(id) + '" class="hidden absolute right-0 mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-xl z-20 py-1 text-left text-xs flex flex-col space-y-0.5">' +
+          '<button onclick="editRecord(\'' + sheetName + '\', \'' + esc(id) + '\')" class="w-full text-left px-3 py-1.5 hover:bg-amber-50 text-amber-800 font-medium">✏️ Edit</button>' +
+          '<button onclick="previewClearingDetails(\'' + esc(id) + '\')" class="w-full text-left px-3 py-1.5 hover:bg-blue-50 text-blue-800 font-medium">👁️ Preview</button>' +
+          '<button onclick="openFilesModal(\'' + esc(id) + '\')" class="w-full text-left px-3 py-1.5 hover:bg-indigo-50 text-indigo-800 font-medium flex justify-between items-center"><span>📁 Files (' + count + ')</span><span class="text-[10px] bg-indigo-100 text-indigo-800 px-1.5 rounded-full">Manage</span></button>' +
+          '<button onclick="downloadReceipt(\'' + sheetName + '\', \'' + esc(id) + '\')" class="w-full text-left px-3 py-1.5 hover:bg-indigo-50 text-indigo-800 font-medium">📄 Download Receipt</button>' +
+          '<button onclick="archiveRecord(\'' + sheetName + '\', \'' + esc(id) + '\')" class="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-gray-800 font-medium">📦 Archive</button>' +
+          '<button onclick="deleteRecord(\'' + sheetName + '\', \'' + esc(id) + '\')" class="w-full text-left px-3 py-1.5 hover:bg-red-50 text-red-800 font-medium border-t">🗑️ Delete</button>' +
         '</div>' +
       '</div>';
     }
 
-    // --- MULTI-FILE ATTACHMENT HANDLERS ---
     function triggerMultiFileInput() {
       const input = document.getElementById("globalMultiFileInput");
       if (input) input.click();
@@ -243,11 +488,11 @@
       } else {
         body.innerHTML = attachments.map(function(att, idx) {
           return '<div class="flex items-center justify-between bg-gray-50 p-2.5 rounded-lg border">' +
-            '<span class="text-xs font-semibold text-gray-700 truncate max-w-[200px]">📎 ' + att.name + '</span>' +
+            '<span class="text-xs font-semibold text-gray-700 truncate max-w-[200px]">📎 ' + esc(att.name) + '</span>' +
             '<div class="flex items-center gap-2">' +
-              '<button onclick="previewSingleFile(\'' + att.name + '\', \'' + att.data + '\', \'' + (att.type || '') + '\')" class="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded text-xs font-medium">Preview</button>' +
-              '<a href="' + att.data + '" download="' + att.name + '" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded text-xs font-medium">Download</a>' +
-              '<button onclick="removeAttachment(\'' + id + '\', ' + idx + ')" class="bg-red-100 hover:bg-red-200 text-red-700 px-2.5 py-1 rounded text-xs font-medium">Delete</button>' +
+              '<button onclick="previewSingleFile(\'' + esc(att.name) + '\', \'' + att.data + '\', \'' + (att.type || '') + '\')" class="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded text-xs font-medium">Preview</button>' +
+              '<a href="' + att.data + '" download="' + esc(att.name) + '" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded text-xs font-medium">Download</a>' +
+              '<button onclick="removeAttachment(\'' + esc(id) + '\', ' + idx + ')" class="bg-red-100 hover:bg-red-200 text-red-700 px-2.5 py-1 rounded text-xs font-medium">Delete</button>' +
             '</div>' +
           '</div>';
         }).join('');
@@ -265,13 +510,13 @@
       const previewBody = document.getElementById("filePreviewBody");
 
       if (fileType.indexOf("image") !== -1 || dataUrl.startsWith("data:image")) {
-        previewBody.innerHTML = '<img src="' + dataUrl + '" alt="' + name + '" class="max-h-[75vh] max-w-full rounded-lg shadow object-contain" />';
+        previewBody.innerHTML = '<img src="' + dataUrl + '" alt="' + esc(name) + '" class="max-h-[75vh] max-w-full rounded-lg shadow object-contain" />';
       } else if (fileType.indexOf("pdf") !== -1 || dataUrl.startsWith("data:application/pdf")) {
         previewBody.innerHTML = '<iframe src="' + dataUrl + '" class="w-full h-[75vh] rounded-lg border"></iframe>';
       } else {
         previewBody.innerHTML = '<div class="text-center py-10 space-y-3">' +
           '<p class="text-sm text-gray-600">Inline preview is not available for this file type.</p>' +
-          '<a href="' + dataUrl + '" download="' + name + '" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-semibold inline-block">Download to View</a>' +
+          '<a href="' + dataUrl + '" download="' + esc(name) + '" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-semibold inline-block">Download to View</a>' +
         '</div>';
       }
 
@@ -293,7 +538,6 @@
       }
     }
 
-    // --- QUICK NOTES HELPER & MODAL ---
     let quickEditNotesList = { storage: [], rent: [], demurrage: [] };
 
     function openQuickNotesModal(id) {
@@ -342,7 +586,7 @@
           (quickEditNotesList.storage.length === 0 ? '<p class="text-xs text-gray-400 italic">No notes.</p>' : 
             quickEditNotesList.storage.map(function(n, idx) {
               return '<div class="flex items-center gap-2">' +
-                '<input type="text" value="' + n + '" oninput="updateQuickNoteEntry(\'storage\', ' + idx + ', this.value)" class="border p-1.5 rounded w-full text-xs bg-white outline-none">' +
+                '<input type="text" value="' + esc(n) + '" oninput="updateQuickNoteEntry(\'storage\', ' + idx + ', this.value)" class="border p-1.5 rounded w-full text-xs bg-white outline-none">' +
                 '<button type="button" onclick="removeQuickNoteEntry(\'storage\', ' + idx + ')" class="text-red-600 font-bold px-1 text-xs">✕</button>' +
               '</div>';
             }).join('')) +
@@ -355,7 +599,7 @@
           (quickEditNotesList.rent.length === 0 ? '<p class="text-xs text-gray-400 italic">No notes.</p>' : 
             quickEditNotesList.rent.map(function(n, idx) {
               return '<div class="flex items-center gap-2">' +
-                '<input type="text" value="' + n + '" oninput="updateQuickNoteEntry(\'rent\', ' + idx + ', this.value)" class="border p-1.5 rounded w-full text-xs bg-white outline-none">' +
+                '<input type="text" value="' + esc(n) + '" oninput="updateQuickNoteEntry(\'rent\', ' + idx + ', this.value)" class="border p-1.5 rounded w-full text-xs bg-white outline-none">' +
                 '<button type="button" onclick="removeQuickNoteEntry(\'rent\', ' + idx + ')" class="text-red-600 font-bold px-1 text-xs">✕</button>' +
               '</div>';
             }).join('')) +
@@ -368,7 +612,7 @@
           (quickEditNotesList.demurrage.length === 0 ? '<p class="text-xs text-gray-400 italic">No notes.</p>' : 
             quickEditNotesList.demurrage.map(function(n, idx) {
               return '<div class="flex items-center gap-2">' +
-                '<input type="text" value="' + n + '" oninput="updateQuickNoteEntry(\'demurrage\', ' + idx + ', this.value)" class="border p-1.5 rounded w-full text-xs bg-white outline-none">' +
+                '<input type="text" value="' + esc(n) + '" oninput="updateQuickNoteEntry(\'demurrage\', ' + idx + ', this.value)" class="border p-1.5 rounded w-full text-xs bg-white outline-none">' +
                 '<button type="button" onclick="removeQuickNoteEntry(\'demurrage\', ' + idx + ')" class="text-red-600 font-bold px-1 text-xs">✕</button>' +
               '</div>';
             }).join('')) +
@@ -391,42 +635,6 @@
       if (typeof showNotification === 'function') showNotification("Notes updated successfully!");
     }
 
-    // --- MULTIPLE NOTES HELPER FOR FORM ---
-    let activeLogNotes = { storage: [], rent: [], demurrage: [] };
-
-    function addLogNoteEntry(type, text) {
-      text = text || "";
-      activeLogNotes[type].push(text);
-      renderLogNotesList(type);
-    }
-
-    function removeLogNoteEntry(type, index) {
-      activeLogNotes[type].splice(index, 1);
-      renderLogNotesList(type);
-    }
-
-    function updateLogNoteEntry(type, index, value) {
-      activeLogNotes[type][index] = value;
-    }
-
-    function renderLogNotesList(type) {
-      const container = document.getElementById(type + "_notes_container");
-      if (!container) return;
-
-      if (activeLogNotes[type].length === 0) {
-        container.innerHTML = '<p class="text-xs text-gray-400 italic">No notes added yet.</p>';
-        return;
-      }
-
-      container.innerHTML = activeLogNotes[type].map(function(note, idx) {
-        return '<div class="flex items-center gap-2 mb-2">' +
-          '<input type="text" value="' + note + '" oninput="updateLogNoteEntry(\'' + type + '\', ' + idx + ', this.value)" placeholder="Enter note description..." class="border p-1.5 rounded w-full text-xs outline-none bg-white">' +
-          '<button type="button" onclick="removeLogNoteEntry(\'' + type + '\', ' + idx + ')" class="bg-red-100 hover:bg-red-200 text-red-700 px-2.5 py-1.5 rounded text-xs font-bold">✕</button>' +
-        '</div>';
-      }).join('');
-    }
-
-    // --- UNIVERSAL MULTI-COLUMN SEARCH & FILTER LOGIC ---
     function applyUniversalSearchAndFilter() {
       const query = (document.getElementById("universalSearchInput")?.value || "").toLowerCase().trim();
       const clientFilter = (document.getElementById("filterClient")?.value || "").toLowerCase();
@@ -476,12 +684,10 @@
       }
     }
 
-    // --- RENDER TABLE & DATA ---
     window.onDataLoaded = function(db) {
       db = db || {};
       const clearingList = db.Clearing || [];
       const paymentsList = db.ClearingPayments || [];
-      const invoicesList = db.ClearingInvoices || [];
       const extraChargesList = db.ClearingExtraCharges || [];
 
       let totalClearingAndTransport = 0;
@@ -517,30 +723,30 @@
         const totalNotesCount = (item.StorageNotesList?.length || 0) + (item.RentNotesList?.length || 0) + (item.DemurrageNotesList?.length || 0) + (item.StorageNotes ? 1 : 0);
         const itemTotalAmt = (parseFloat(item.ClearingAmount) || 0) + (parseFloat(item.TransportAmount) || 0) + (parseFloat(item.StorageAmount) || 0);
 
-        tableRows += '<tr class="hover:bg-gray-50 border-b cursor-pointer" onclick="previewClearingDetails(\'' + item.ID + '\')" ' + 
-              'data-client="' + (item.Client || '') + '" ' + 
-              'data-port="' + (item.Port || '') + '" ' + 
-              'data-transporter="' + (item.Transporter || '') + '">' +
-            '<td class="p-3 text-center" onclick="event.stopPropagation()"><input type="checkbox" class="clearing-file-checkbox" value="' + item.ID + '" data-container="' + (item.ContainerNo || '') + '" data-amount="' + itemTotalAmt + '"></td>' +
-            '<td class="p-3 text-xs text-gray-500 font-mono">' + (item.ID || '') + '</td>' +
-            '<td class="p-3 font-bold text-gray-800">📦 ' + (item.ContainerNo || '') + (hasFiles ? ' 📎 (' + attachments.length + ')' : '') + '</td>' +
-            '<td class="p-3 text-xs text-blue-600">' + (item.BLno || '') + '</td>' +
-            '<td class="p-3 text-xs">' + (item.Consignee || '') + '</td>' +
-            '<td class="p-3 font-semibold text-indigo-700">' + (item.Client || '') + '</td>' +
-            '<td class="p-3 text-xs">' + (item.Size || '') + '</td>' +
-            '<td class="p-3 text-xs">' + (item.Port || '') + '</td>' +
-            '<td class="p-3 text-xs">' + (item.Destination || '') + '</td>' +
-            '<td class="p-3 text-xs text-gray-600">' + (item.RecDocs || 'N/A') + '</td>' +
-            '<td class="p-3 text-xs text-gray-600">' + (item.SentAgent || 'N/A') + '</td>' +
-            '<td class="p-3 text-xs text-gray-600 font-medium">' + (item.ETA || 'N/A') + '</td>' +
-            '<td class="p-3 text-xs text-gray-600">' + (item.Offloaded || 'N/A') + '</td>' +
-            '<td class="p-3 text-xs">' + (item.Transporter || '') + '</td>' +
-            '<td class="p-3 text-xs">' + (item.Truck || '') + '</td>' +
+        tableRows += '<tr class="hover:bg-gray-50 border-b cursor-pointer" onclick="previewClearingDetails(\'' + esc(item.ID) + '\')" ' + 
+              'data-client="' + esc(item.Client || '') + '" ' + 
+              'data-port="' + esc(item.Port || '') + '" ' + 
+              'data-transporter="' + esc(item.Transporter || '') + '">' +
+            '<td class="p-3 text-center" onclick="event.stopPropagation()"><input type="checkbox" class="clearing-file-checkbox" value="' + esc(item.ID) + '" data-container="' + esc(item.ContainerNo || '') + '" data-amount="' + itemTotalAmt + '"></td>' +
+            '<td class="p-3 text-xs text-gray-500 font-mono">' + esc(item.ID || '') + '</td>' +
+            '<td class="p-3 font-bold text-gray-800">📦 ' + esc(item.ContainerNo || '') + (hasFiles ? ' 📎 (' + attachments.length + ')' : '') + '</td>' +
+            '<td class="p-3 text-xs text-blue-600">' + esc(item.BLno || '') + '</td>' +
+            '<td class="p-3 text-xs">' + esc(item.Consignee || '') + '</td>' +
+            '<td class="p-3 font-semibold text-indigo-700">' + esc(item.Client || '') + '</td>' +
+            '<td class="p-3 text-xs">' + esc(item.Size || '') + '</td>' +
+            '<td class="p-3 text-xs">' + esc(item.Port || '') + '</td>' +
+            '<td class="p-3 text-xs">' + esc(item.Destination || '') + '</td>' +
+            '<td class="p-3 text-xs text-gray-600">' + esc(item.RecDocs || 'N/A') + '</td>' +
+            '<td class="p-3 text-xs text-gray-600">' + esc(item.SentAgent || 'N/A') + '</td>' +
+            '<td class="p-3 text-xs text-gray-600 font-medium">' + esc(item.ETA || 'N/A') + '</td>' +
+            '<td class="p-3 text-xs text-gray-600">' + esc(item.Offloaded || 'N/A') + '</td>' +
+            '<td class="p-3 text-xs">' + esc(item.Transporter || '') + '</td>' +
+            '<td class="p-3 text-xs">' + esc(item.Truck || '') + '</td>' +
             '<td class="p-3 font-semibold text-blue-600">$' + parseFloat(item.ClearingAmount || 0).toFixed(2) + '</td>' +
             '<td class="p-3 font-semibold text-emerald-600">$' + parseFloat(item.TransportAmount || 0).toFixed(2) + '</td>' +
             '<td class="p-3 font-semibold text-red-600">$' + parseFloat(item.StorageAmount || 0).toFixed(2) + '</td>' +
             '<td class="p-3 text-center" onclick="event.stopPropagation()">' +
-              '<button onclick="openQuickNotesModal(\'' + item.ID + '\')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded text-xs font-semibold border border-indigo-200 transition">' +
+              '<button onclick="openQuickNotesModal(\'' + esc(item.ID) + '\')" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded text-xs font-semibold border border-indigo-200 transition">' +
                 '📝 Notes (' + totalNotesCount + ')' +
               '</button>' +
             '</td>' +
@@ -568,9 +774,9 @@
           '<div class="p-3 border-b bg-gray-50 flex flex-wrap justify-between items-center gap-2">' +
             '<div class="flex flex-wrap items-center gap-2 flex-1">' +
               '<input type="text" id="universalSearchInput" placeholder="🔍 Universal search across all columns..." oninput="applyUniversalSearchAndFilter()" class="border bg-white px-3 py-1.5 rounded text-xs w-full md:w-72 outline-none">' +
-              '<select id="filterClient" onchange="applyUniversalSearchAndFilter()" class="border bg-white px-2.5 py-1.5 rounded text-xs outline-none"><option value="">All Clients</option>' + uniqueClients.map(function(c) { return '<option value="' + c + '">' + c + '</option>'; }).join('') + '</select>' +
-              '<select id="filterPort" onchange="applyUniversalSearchAndFilter()" class="border bg-white px-2.5 py-1.5 rounded text-xs outline-none"><option value="">All Ports</option>' + uniquePorts.map(function(p) { return '<option value="' + p + '">' + p + '</option>'; }).join('') + '</select>' +
-              '<select id="filterTransporter" onchange="applyUniversalSearchAndFilter()" class="border bg-white px-2.5 py-1.5 rounded text-xs outline-none"><option value="">All Transporters</option>' + uniqueTransporters.map(function(t) { return '<option value="' + t + '">' + t + '</option>'; }).join('') + '</select>' +
+              '<select id="filterClient" onchange="applyUniversalSearchAndFilter()" class="border bg-white px-2.5 py-1.5 rounded text-xs outline-none"><option value="">All Clients</option>' + uniqueClients.map(function(c) { return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('') + '</select>' +
+              '<select id="filterPort" onchange="applyUniversalSearchAndFilter()" class="border bg-white px-2.5 py-1.5 rounded text-xs outline-none"><option value="">All Ports</option>' + uniquePorts.map(function(p) { return '<option value="' + esc(p) + '">' + esc(p) + '</option>'; }).join('') + '</select>' +
+              '<select id="filterTransporter" onchange="applyUniversalSearchAndFilter()" class="border bg-white px-2.5 py-1.5 rounded text-xs outline-none"><option value="">All Transporters</option>' + uniqueTransporters.map(function(t) { return '<option value="' + esc(t) + '">' + esc(t) + '</option>'; }).join('') + '</select>' +
             '</div>' +
             '<div class="flex items-center gap-2">' +
               (typeof renderColumnVisibilityMenu === 'function' ? renderColumnVisibilityMenu('table_Clearing', columns) : '') +
@@ -616,8 +822,8 @@
 
       const today = new Date().toISOString().split("T")[0];
 
-      const html = '<form onsubmit="submitBatchClearingPayment(event, \'' + clearingIds.join(',') + '\')" class="space-y-4">' +
-        '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Selected Containers (' + checkedBoxes.length + ')</label><input type="text" value="' + containerList.join(', ') + '" disabled class="border p-2 rounded w-full text-xs bg-gray-50 font-medium"></div>' +
+      const html = '<form onsubmit="submitBatchClearingPayment(event, \'' + esc(clearingIds.join(',')) + '\')" class="space-y-4">' +
+        '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Selected Containers (' + checkedBoxes.length + ')</label><input type="text" value="' + esc(containerList.join(', ')) + '" disabled class="border p-2 rounded w-full text-xs bg-gray-50 font-medium"></div>' +
         '<div class="grid grid-cols-2 gap-3">' +
           '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Payment Date</label><input type="date" id="batch_pay_date" value="' + today + '" required class="border p-2 rounded w-full text-xs outline-none bg-white"></div>' +
           '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Total Amount Paid ($)</label><input type="number" step="0.01" id="batch_pay_amount" value="' + totalAmount.toFixed(2) + '" required class="border p-2 rounded w-full text-xs font-bold text-emerald-600 outline-none"></div>' +
@@ -637,15 +843,22 @@
 
       if (!globalData.ClearingPayments) globalData.ClearingPayments = [];
 
-      const newPayment = {
-        ID: "PAY-" + Date.now().toString().slice(-4),
+      const batchId = "PAY-" + Date.now().toString().slice(-4);
+      let allocations = [];
+      ids.forEach(function(clearingId) {
+        allocations.push({ invoiceId: clearingId, amount: payAmount / ids.length });
+      });
+
+      const paymentRecord = {
+        ID: batchId,
         Date: payDate,
         BeneficiaryName: "Multiple Clearing Files (" + ids.length + ")",
         AmountPaid: payAmount,
-        InvoicesPaid: "Clearing IDs: " + ids.join(", ")
+        InvoicesPaid: ids.map(function(id) { return id + " ($" + (payAmount / ids.length).toFixed(2) + ")"; }).join(", "),
+        Allocations: allocations
       };
 
-      await sendToServer("ClearingPayments", "add", newPayment);
+      await sendToServer("ClearingPayments", "add", paymentRecord);
       closeInvoicePaymentModal();
       if (typeof showNotification === 'function') showNotification("Batch payment recorded successfully!");
       if (typeof fetchDatabase === 'function') fetchDatabase(true);
@@ -671,32 +884,37 @@
         const statusLabel = fin.statusLabel;
 
         const extraChargesSummary = fin.invCharges.map(function(ec) {
-          return '• ' + (ec.Type || 'Extra') + ': $' + parseFloat(ec.Amount || 0).toFixed(2) + ' (' + (ec.Description || 'No desc') + ')';
+          return '• ' + esc(ec.Type || 'Extra') + ': $' + parseFloat(ec.Amount || 0).toFixed(2) + ' (' + esc(ec.Description || 'No desc') + ')';
         }).join('<br>');
 
-        let paymentRecordsSummary = fin.paymentRecords.map(function(pr) {
-          return '<span class="inline-block bg-gray-100 border px-1.5 py-0.5 rounded text-[10px] font-mono mr-1 mb-1">Tx: ' + pr.paymentId + ' ($' + parseFloat(pr.amount).toFixed(2) + ')</span>';
+        let paymentRecordsSummary = fin.txList.map(function(tx) {
+          return '<span onclick="openPaymentTransactionDetails(\'' + esc(tx.paymentId) + '\')" class="inline-block bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded text-[10px] font-mono mr-1 mb-1 cursor-pointer hover:bg-blue-100" title="Click to view transaction details"><b>Tx: ' + esc(tx.paymentId) + '</b>: $' + parseFloat(tx.amount).toFixed(2) + '</span>';
         }).join('') || '<span class="text-gray-400 italic">No payments recorded yet</span>';
+
+        if (fin.overpaidAmount > 0) {
+          paymentRecordsSummary += '<span class="block text-red-600 font-bold text-[10px] mt-1">⚠️ Overpaid: +$' + fin.overpaidAmount.toFixed(2) + ' (Available Credit)</span>';
+        }
 
         let statusBadge = 'bg-amber-100 text-amber-800';
         if (statusLabel === 'Fully Paid') statusBadge = 'bg-emerald-100 text-emerald-800';
         else if (statusLabel === 'Part Paid') statusBadge = 'bg-blue-100 text-blue-800';
+        else if (statusLabel === 'Overpaid') statusBadge = 'bg-red-100 text-red-800 font-bold';
 
         return '<tr class="hover:bg-gray-50 border-b text-xs">' +
-          '<td class="p-2"><input type="checkbox" class="inv-checkbox" value="' + inv.ID + '" data-amount="' + grandTotal + '"></td>' +
-          '<td class="p-2 font-mono">' + inv.ID + '</td>' +
-          '<td class="p-2 font-semibold text-gray-800">' + inv.ContainerNo + '</td>' +
-          '<td class="p-2">' + inv.Type + '</td>' +
-          '<td class="p-2">' + inv.BeneficiaryName + '</td>' +
+          '<td class="p-2"><input type="checkbox" class="inv-checkbox" value="' + esc(inv.ID) + '" data-amount="' + grandTotal + '"></td>' +
+          '<td class="p-2 font-mono font-bold"><button onclick="openInvoicePaymentHistory(\'' + esc(inv.ID) + '\')" class="text-blue-700 hover:underline font-bold text-xs cursor-pointer">📦 ' + esc(inv.ID) + '</button></td>' +
+          '<td class="p-2 font-semibold text-gray-800">' + esc(inv.ContainerNo) + '</td>' +
+          '<td class="p-2">' + esc(inv.Type) + '</td>' +
+          '<td class="p-2">' + esc(inv.BeneficiaryName) + '</td>' +
           '<td class="p-2 font-semibold text-blue-600">$' + grandTotal.toFixed(2) + '</td>' +
           '<td class="p-2 font-semibold text-emerald-600">$' + alreadyPaid.toFixed(2) + '</td>' +
           '<td class="p-2 font-semibold text-amber-600">$' + remainingDue.toFixed(2) + '</td>' +
           '<td class="p-2 text-[10px] text-gray-600">' + paymentRecordsSummary + (extraChargesSummary ? '<br>' + extraChargesSummary : '') + '</td>' +
-          '<td class="p-2"><span class="px-2 py-0.5 rounded text-[10px] font-bold ' + statusBadge + '">' + statusLabel + '</span></td>' +
+          '<td class="p-2"><span class="px-2 py-0.5 rounded text-[10px] font-bold ' + statusBadge + '">' + (statusLabel === 'Overpaid' ? 'Overpaid (+$' + fin.overpaidAmount.toFixed(2) + ')' : statusLabel) + '</span></td>' +
           '<td class="p-2 text-right space-x-1 whitespace-nowrap">' +
-            '<button onclick="openPaymentModal(\'' + inv.ID + '\')" class="bg-blue-100 text-blue-800 hover:bg-blue-200 px-2 py-0.5 rounded text-[10px] font-bold">💳 Pay</button>' +
-            '<button onclick="editInvoiceRecord(\'' + inv.ID + '\')" class="bg-amber-100 text-amber-800 hover:bg-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">✏️ Edit</button>' +
-            '<button onclick="deleteInvoiceRecord(\'' + inv.ID + '\')" class="bg-red-100 text-red-800 hover:bg-red-200 px-2 py-0.5 rounded text-[10px] font-bold">🗑️ Delete</button>' +
+            '<button onclick="openPaymentModal(\'' + esc(inv.ID) + '\')" class="bg-blue-100 text-blue-800 hover:bg-blue-200 px-2 py-0.5 rounded text-[10px] font-bold">💳 Pay</button>' +
+            '<button onclick="editInvoiceRecord(\'' + esc(inv.ID) + '\')" class="bg-amber-100 text-amber-800 hover:bg-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">✏️ Edit</button>' +
+            '<button onclick="deleteInvoiceRecord(\'' + esc(inv.ID) + '\')" class="bg-red-100 text-red-800 hover:bg-red-200 px-2 py-0.5 rounded text-[10px] font-bold">🗑️ Delete</button>' +
           '</td>' +
         '</tr>';
       }).join('');
@@ -704,7 +922,7 @@
       return '<div class="border-t pt-4 space-y-4">' +
         '<div class="flex justify-between items-center">' +
           '<h3 class="font-bold text-gray-800 text-sm">💵 Container Invoices & Payments</h3>' +
-          '<button onclick="openRecordInvoiceModal(\'' + containerId + '\')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Record New Invoice</button>' +
+          '<button onclick="openRecordInvoiceModal(\'' + esc(containerId) + '\')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition">➕ Record New Invoice</button>' +
         '</div>' +
         '<div class="bg-blue-50 border border-blue-200 p-3 rounded-lg flex justify-between items-center">' +
           '<span class="text-xs text-blue-600 font-semibold">Total Invoiced (Base + Extra Charges Combined)</span>' +
@@ -722,7 +940,7 @@
             '<table class="w-full text-left text-xs" id="tbl_preview_invoices">' +
               '<thead><tr class="bg-gray-100 text-gray-500">' +
                 '<th class="p-2"><input type="checkbox" onclick="toggleAllInvoices(this, \'tbl_preview_invoices\')"></th>' +
-                '<th class="p-2">ID</th><th class="p-2">Container</th><th class="p-2">Type</th><th class="p-2">Beneficiary</th><th class="p-2">Total ($)</th><th class="p-2">Paid ($)</th><th class="p-2">Balance ($)</th><th class="p-2">Payments & Extra</th><th class="p-2">Status</th><th class="p-2 text-right">Actions</th>' +
+                '<th class="p-2">ID</th><th class="p-2">Container</th><th class="p-2">Type</th><th class="p-2">Beneficiary</th><th class="p-2">Total ($)</th><th class="p-2">Paid ($)</th><th class="p-2">Balance ($)</th><th class="p-2">Payments & Exact Paid</th><th class="p-2">Status</th><th class="p-2 text-right">Actions</th>' +
               '</tr></thead>' +
               '<tbody class="divide-y">' + (invoiceRows || '<tr><td colspan="11" class="p-3 text-center text-gray-400">No invoices recorded for this container.</td></tr>') + '</tbody>' +
             '</table>' +
@@ -737,7 +955,9 @@
       parentTable.querySelectorAll('.inv-checkbox').forEach(function(cb) { cb.checked = masterCheckbox.checked; });
     }
 
-    // --- PAYMENT MODAL & ROW-BY-ROW CUSTOM ALLOCATION ---
+    // --- PAYMENT MODAL & REAL-TIME DYNAMIC TABLE ---
+    let paymentActiveInvoicesList = [];
+
     function openPaymentModal(singleInvId) {
       closeAllModals();
       singleInvId = singleInvId || "";
@@ -745,70 +965,178 @@
       const allInvoices = db.ClearingInvoices || [];
       const allExtraCharges = db.ClearingExtraCharges || [];
 
-      let selectedInvoices = [];
+      paymentActiveInvoicesList = [];
+      let initialSelectedIds = [];
 
       if (singleInvId) {
         const inv = allInvoices.find(function(x) { return String(x.ID) === String(singleInvId); });
-        if (inv) selectedInvoices.push(inv);
+        if (inv) initialSelectedIds.push(inv.ID);
       } else {
         const checkedBoxes = document.querySelectorAll('.inv-checkbox:checked');
         checkedBoxes.forEach(function(cb) {
-          const inv = allInvoices.find(function(x) { return String(x.ID) === String(cb.value); });
-          if (inv) selectedInvoices.push(inv);
+          initialSelectedIds.push(cb.value);
         });
       }
 
-      if (selectedInvoices.length === 0) {
+      if (initialSelectedIds.length === 0) {
         alert("Please select at least one invoice using the checkboxes to record a payment.");
         return;
       }
 
+      const firstInv = allInvoices.find(function(x) { return String(x.ID) === String(initialSelectedIds[0]); });
+      const beneficiary = firstInv ? firstInv.BeneficiaryName : "Agent/Transporter";
+
+      allInvoices.forEach(function(inv) {
+        if (String(inv.BeneficiaryName || '').toLowerCase() === String(beneficiary).toLowerCase()) {
+          const isSelected = initialSelectedIds.includes(inv.ID);
+          const fin = getInvoiceFinancials(inv, allExtraCharges);
+          paymentActiveInvoicesList.push({
+            id: inv.ID,
+            containerNo: inv.ContainerNo,
+            type: inv.Type,
+            total: fin.grandTotal,
+            paidBefore: fin.alreadyPaid,
+            balance: fin.remainingDue,
+            payingNow: isSelected ? fin.remainingDue : 0,
+            included: isSelected
+          });
+        }
+      });
+
+      renderPaymentModalContent(beneficiary);
+      document.getElementById("invoicePaymentModal").classList.remove("hidden");
+    }
+
+    function renderPaymentModalContent(beneficiary) {
       const today = new Date().toISOString().split("T")[0];
-      const beneficiary = selectedInvoices[0].BeneficiaryName || "Agent/Transporter";
+      const db = globalData || {};
+      const allInvoices = db.ClearingInvoices || [];
+      const allExtraCharges = db.ClearingExtraCharges || [];
 
-      let rowsHtml = selectedInvoices.map(function(inv) {
-        const fin = getInvoiceFinancials(inv, allExtraCharges);
-        const invTotal = fin.grandTotal;
-        const alreadyPaid = fin.alreadyPaid;
-        const remainingDue = fin.remainingDue;
+      let availableCreditItems = [];
+      allInvoices.forEach(function(inv) {
+        if (String(inv.BeneficiaryName || '').toLowerCase() === String(beneficiary).toLowerCase()) {
+          const fin = getInvoiceFinancials(inv, allExtraCharges);
+          if (fin.overpaidAmount > 0) {
+            availableCreditItems.push({ invoiceId: inv.ID, containerNo: inv.ContainerNo, creditAmount: fin.overpaidAmount });
+          }
+        }
+      });
+      let totalAvailableCredit = availableCreditItems.reduce(function(sum, c) { return sum + c.creditAmount; }, 0);
 
-        return '<tr class="border-b text-xs" data-inv-id="' + inv.ID + '" data-total="' + invTotal + '" data-paid-before="' + alreadyPaid + '">' +
-          '<td class="p-2 font-mono font-semibold">' + inv.ID + '<span class="block text-[10px] text-gray-500">Container: ' + inv.ContainerNo + '</span></td>' +
-          '<td class="p-2">$' + invTotal.toFixed(2) + '</td>' +
-          '<td class="p-2 text-emerald-700">$' + alreadyPaid.toFixed(2) + '</td>' +
-          '<td class="p-2 text-amber-700 font-semibold balance-due-cell">$' + remainingDue.toFixed(2) + '</td>' +
-          '<td class="p-2"><input type="number" step="0.01" value="' + remainingDue.toFixed(2) + '" oninput="recalculateBatchPaymentTotal()" class="border p-1.5 rounded w-28 text-xs font-bold text-blue-600 outline-none inv-pay-input bg-white"></td>' +
-          '<td class="p-2 status-preview-cell"><span class="px-2 py-0.5 rounded text-[10px] font-bold ' + (remainingDue === 0 ? 'bg-emerald-100 text-emerald-800' : (alreadyPaid > 0 ? 'bg-blue-100 text-blue-800' : 'bg-amber-100 text-amber-800')) + '">' + (remainingDue === 0 ? 'Fully Paid' : (alreadyPaid > 0 ? 'Part Paid' : 'Unpaid')) + '</span></td>' +
+      const beneficiaryInvoices = allInvoices.filter(function(inv) {
+        return String(inv.BeneficiaryName || '').toLowerCase() === String(beneficiary).toLowerCase() &&
+               !paymentActiveInvoicesList.some(function(p) { return String(p.id) === String(inv.ID); });
+      });
+
+      let rowsHtml = paymentActiveInvoicesList.map(function(item, idx) {
+        return '<tr class="border-b text-xs" data-index="' + idx + '">' +
+          '<td class="p-2 text-center"><input type="checkbox" ' + (item.included ? 'checked' : '') + ' onchange="togglePaymentInvoiceInclude(' + idx + ', this.checked)"></td>' +
+          '<td class="p-2 font-mono font-semibold"><button type="button" onclick="openInvoicePaymentHistory(\'' + esc(item.id) + '\')" class="text-blue-700 hover:underline font-bold text-xs">📦 ' + esc(item.id) + '</button><span class="block text-[10px] text-gray-500">Container: ' + esc(item.containerNo) + ' (' + esc(item.type) + ')</span></td>' +
+          '<td class="p-2 font-medium">$' + item.total.toFixed(2) + '</td>' +
+          '<td class="p-2 text-emerald-700 font-medium">$' + item.paidBefore.toFixed(2) + '</td>' +
+          '<td class="p-2 text-amber-700 font-semibold">$' + item.balance.toFixed(2) + '</td>' +
+          '<td class="p-2"><input type="number" step="0.01" value="' + item.payingNow.toFixed(2) + '" ' + (!item.included ? 'disabled' : '') + ' oninput="updatePaymentAmount(' + idx + ', this.value)" class="border p-1.5 rounded w-28 text-xs font-bold text-blue-600 outline-none bg-white shadow-sm"></td>' +
+          '<td class="payment-remaining-cell p-2 font-semibold">$' + Math.max(0, item.balance - item.payingNow).toFixed(2) + '</td>' +
+          '<td class="payment-status-cell p-2"></td>' +
         '</tr>';
       }).join('');
+
+      let creditSectionHtml = '';
+      if (availableCreditItems.length > 0) {
+        creditSectionHtml = '<div class="bg-indigo-50 border border-indigo-200 p-3 rounded-lg space-y-2">' +
+          '<div class="flex justify-between items-center">' +
+            '<div><span class="text-xs font-bold text-indigo-900 block">💡 Available Overpayment Credit: $' + totalAvailableCredit.toFixed(2) + '</span><span class="text-[10px] text-indigo-700 block">You have excess credit from previous overpayments for <b>' + esc(beneficiary) + '</b>. You can assign this credit directly.</span></div>' +
+            '<button type="button" onclick="assignAllAvailableCredit(\'' + totalAvailableCredit + '\')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-xs font-semibold">Assign All Credit</button>' +
+          '</div>' +
+        '</div>';
+      }
+
+      let addAnotherInvoiceHtml = '';
+      if (beneficiaryInvoices.length > 0) {
+        addAnotherInvoiceHtml = '<div class="flex items-center gap-2 bg-gray-50 p-2.5 rounded-lg border text-xs">' +
+          '<span class="font-semibold text-gray-700">Add another invoice for ' + esc(beneficiary) + ':</span>' +
+          '<select id="additionalInvoiceSelect" class="border p-1.5 rounded bg-white outline-none flex-1">' +
+            beneficiaryInvoices.map(function(inv) { return '<option value="' + esc(inv.ID) + '">' + esc(inv.ID) + ' (Container: ' + esc(inv.ContainerNo) + ' - ' + esc(inv.Type) + ')</option>'; }).join('') +
+          '</select>' +
+          '<button type="button" onclick="addInvoiceToPaymentModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded font-semibold">+ Add to Payment</button>' +
+        '</div>';
+      }
 
       const html = '<form onsubmit="submitCustomAllocationPayment(event)" class="space-y-4">' +
         '<div class="grid grid-cols-2 gap-3 bg-gray-50 p-3 rounded-lg border">' +
           '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Payment Date</label><input type="date" id="pay_date" value="' + today + '" required class="border p-2 rounded w-full text-xs outline-none bg-white"></div>' +
-          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Beneficiary</label><input type="text" id="pay_beneficiary" value="' + beneficiary + '" disabled class="border p-2 rounded w-full text-xs bg-gray-100 font-semibold"></div>' +
+          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Beneficiary</label><input type="text" id="pay_beneficiary" value="' + esc(beneficiary) + '" disabled class="border p-2 rounded w-full text-xs bg-gray-100 font-semibold"></div>' +
         '</div>' +
+        creditSectionHtml +
+        addAnotherInvoiceHtml +
         '<div class="bg-white rounded-lg border overflow-hidden max-h-60 overflow-y-auto">' +
           '<table class="w-full text-left text-xs" id="customPaymentTable">' +
             '<thead><tr class="bg-gray-100 text-gray-500">' +
-              '<th class="p-2">Invoice ID</th><th class="p-2">Total ($)</th><th class="p-2">Paid Before ($)</th><th class="p-2">Balance ($)</th><th class="p-2">Amount to Pay ($)</th><th class="p-2">New Status</th>' +
+              '<th class="p-2 text-center">Include</th><th class="p-2">Invoice ID</th><th class="p-2">Total ($)</th><th class="p-2">Paid Before ($)</th><th class="p-2">Balance ($)</th><th class="p-2">Exact Amount to Pay ($)</th><th class="p-2">Resulting Balance ($)</th><th class="p-2">New Status</th>' +
             '</tr></thead>' +
             '<tbody class="divide-y">' + rowsHtml + '</tbody>' +
           '</table>' +
         '</div>' +
         '<div class="bg-emerald-50 border border-emerald-200 p-3 rounded-lg flex justify-between items-center">' +
-          '<span class="text-xs text-emerald-700 font-bold uppercase">Grand Total Payment Amount</span>' +
+          '<span class="text-xs text-emerald-700 font-bold uppercase">Grand Total Exact Payment Amount</span>' +
           '<span id="grandTotalPaymentDisplay" class="text-lg font-bold text-emerald-900">$0.00</span>' +
         '</div>' +
-        '<button type="submit" class="w-full bg-emerald-600 text-white py-2.5 rounded-lg font-semibold hover:bg-emerald-700 transition text-xs shadow">Confirm & Record Custom Payment</button>' +
+        '<button type="submit" class="w-full bg-emerald-600 text-white py-2.5 rounded-lg font-semibold hover:bg-emerald-700 transition text-xs shadow">Confirm & Record Single Transaction</button>' +
       '</form>';
 
       document.getElementById("invoicePaymentBody").innerHTML = html;
-      document.getElementById("invoicePaymentModal").classList.remove("hidden");
       recalculateBatchPaymentTotal();
     }
 
-    function closeInvoicePaymentModal() {
-      document.getElementById("invoicePaymentModal").classList.add("hidden");
+    function togglePaymentInvoiceInclude(index, checked) {
+      paymentActiveInvoicesList[index].included = checked;
+      if (checked && paymentActiveInvoicesList[index].payingNow === 0) {
+        paymentActiveInvoicesList[index].payingNow = paymentActiveInvoicesList[index].balance;
+      }
+      renderPaymentModalContent(document.getElementById("pay_beneficiary").value);
+    }
+
+    function updatePaymentAmount(index, val) {
+      paymentActiveInvoicesList[index].payingNow = parseFloat(val) || 0;
+      recalculateBatchPaymentTotal();
+    }
+
+    function addInvoiceToPaymentModal() {
+      const select = document.getElementById("additionalInvoiceSelect");
+      if (!select) return;
+      const invId = select.value;
+      const db = globalData || {};
+      const inv = (db.ClearingInvoices || []).find(function(x) { return String(x.ID) === String(invId); });
+      if (!inv) return;
+
+      const fin = getInvoiceFinancials(inv, db.ClearingExtraCharges || []);
+      paymentActiveInvoicesList.push({
+        id: inv.ID,
+        containerNo: inv.ContainerNo,
+        type: inv.Type,
+        total: fin.grandTotal,
+        paidBefore: fin.alreadyPaid,
+        balance: fin.remainingDue,
+        payingNow: fin.remainingDue,
+        included: true
+      });
+
+      renderPaymentModalContent(document.getElementById("pay_beneficiary").value);
+    }
+
+    function assignAllAvailableCredit(creditAmt) {
+      let remainingCredit = parseFloat(creditAmt) || 0;
+      paymentActiveInvoicesList.forEach(function(item) {
+        if (!item.included || remainingCredit <= 0) return;
+        if (item.balance > 0) {
+          const add = Math.min(item.balance, remainingCredit);
+          item.payingNow += add;
+          remainingCredit -= add;
+        }
+      });
+      renderPaymentModalContent(document.getElementById("pay_beneficiary").value);
+      if (typeof showNotification === 'function') showNotification("Available credit assigned successfully!");
     }
 
     function recalculateBatchPaymentTotal() {
@@ -816,19 +1144,27 @@
       const rows = document.querySelectorAll("#customPaymentTable tbody tr");
 
       rows.forEach(function(row) {
-        const totalDue = parseFloat(row.getAttribute("data-total")) || 0;
-        const paidBefore = parseFloat(row.getAttribute("data-paid-before")) || 0;
-        const inputVal = parseFloat(row.querySelector(".inv-pay-input").value) || 0;
+        const idx = parseInt(row.getAttribute("data-index"));
+        const item = paymentActiveInvoicesList[idx];
+        if (!item.included) return;
 
-        grandTotal += inputVal;
+        grandTotal += item.payingNow;
 
-        const newTotalPaid = paidBefore + inputVal;
-        const remainingBalance = Math.max(0, totalDue - newTotalPaid);
-        
-        row.querySelector(".balance-due-cell").innerText = "$" + remainingBalance.toFixed(2);
+        const newTotalPaid = item.paidBefore + item.payingNow;
+        const diff = newTotalPaid - item.total;
+        const remainingBalance = Math.max(0, item.total - newTotalPaid);
 
-        const statusCell = row.querySelector(".status-preview-cell");
-        if (remainingBalance === 0) {
+        const remCell = row.querySelector(".payment-remaining-cell");
+        if (diff > 0.005) {
+          remCell.innerHTML = '<span class="text-red-600 font-bold">Credit: +$' + diff.toFixed(2) + '</span>';
+        } else {
+          remCell.innerHTML = '<span class="text-gray-800 font-semibold">$' + remainingBalance.toFixed(2) + '</span>';
+        }
+
+        const statusCell = row.querySelector(".payment-status-cell");
+        if (diff > 0.005) {
+          statusCell.innerHTML = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800">Overpaid</span>';
+        } else if (Math.abs(item.total - newTotalPaid) <= 0.005 && item.total > 0) {
           statusCell.innerHTML = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">Fully Paid</span>';
         } else if (newTotalPaid > 0) {
           statusCell.innerHTML = '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800">Part Paid</span>';
@@ -841,6 +1177,7 @@
       if (display) display.innerText = "$" + grandTotal.toFixed(2);
     }
 
+    // --- SUBMIT: ONE TRANSACTION WITH EXACT ALLOCATED AMOUNTS ---
     async function submitCustomAllocationPayment(e) {
       e.preventDefault();
       const payDate = document.getElementById("pay_date").value;
@@ -851,51 +1188,19 @@
       const allExtraCharges = globalData.ClearingExtraCharges || [];
 
       let grandTotalPaid = 0;
-      let paidInvoiceIds = [];
-      let updatedInvoicesList = [];
+      let allocationsList = [];
+      let invoicesPaidSummaryParts = [];
       const paymentId = "PAY-" + Date.now().toString().slice(-4);
 
-      const rows = document.querySelectorAll("#customPaymentTable tbody tr");
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const invId = row.getAttribute("data-inv-id");
-        const amtPayingNow = parseFloat(row.querySelector(".inv-pay-input").value) || 0;
+      paymentActiveInvoicesList.forEach(function(item) {
+        if (!item.included || item.payingNow === 0) return;
+        allocationsList.push({ invoiceId: item.id, amount: item.payingNow });
+        invoicesPaidSummaryParts.push(item.id + " ($" + item.payingNow.toFixed(2) + ")");
+        grandTotalPaid += item.payingNow;
+      });
 
-        if (amtPayingNow <= 0) continue;
-
-        const inv = globalData.ClearingInvoices.find(function(x) { return String(x.ID) === String(invId); });
-        if (inv) {
-          const fin = getInvoiceFinancials(inv, allExtraCharges);
-          
-          if (!Array.isArray(inv.PaymentRecords)) {
-            inv.PaymentRecords = [];
-            if (fin.alreadyPaid > 0) {
-              inv.PaymentRecords.push({ paymentId: "INITIAL-PAY", amount: fin.alreadyPaid, date: payDate });
-            }
-          }
-
-          inv.PaymentRecords.push({ paymentId: paymentId, amount: amtPayingNow, date: payDate });
-
-          let newTotalPaid = 0;
-          inv.PaymentRecords.forEach(function(pr) { newTotalPaid += parseFloat(pr.amount) || 0; });
-          inv.PaidAmount = newTotalPaid;
-
-          if (newTotalPaid >= fin.grandTotal) {
-            inv.Status = "Fully Paid";
-          } else if (newTotalPaid > 0) {
-            inv.Status = "Part Paid";
-          } else {
-            inv.Status = "Unpaid";
-          }
-
-          grandTotalPaid += amtPayingNow;
-          paidInvoiceIds.push(invId + " (Tx:" + paymentId + ")");
-          updatedInvoicesList.push(inv);
-        }
-      }
-
-      if (grandTotalPaid <= 0) {
-        alert("Please enter a valid payment amount greater than $0.");
+      if (grandTotalPaid === 0) {
+        alert("Please enter a valid payment amount for at least one invoice.");
         return;
       }
 
@@ -904,16 +1209,34 @@
         Date: payDate,
         BeneficiaryName: beneficiary || "Agent/Transporter",
         AmountPaid: grandTotalPaid,
-        InvoicesPaid: paidInvoiceIds.join(", ")
+        InvoicesPaid: invoicesPaidSummaryParts.join(", "),
+        Allocations: allocationsList
       };
 
       await sendToServer("ClearingPayments", "add", newPayment);
-      for (const inv of updatedInvoicesList) {
-        await sendToServer("ClearingInvoices", "update", inv);
+
+      for (let i = 0; i < paymentActiveInvoicesList.length; i++) {
+        const item = paymentActiveInvoicesList[i];
+        if (!item.included || item.payingNow === 0) continue;
+
+        const inv = globalData.ClearingInvoices.find(function(x) { return String(x.ID) === String(item.id); });
+        if (inv) {
+          const fin = getInvoiceFinancials(inv, allExtraCharges);
+          if (fin.overpaidAmount > 0) {
+            inv.Status = "Overpaid";
+          } else if (fin.remainingDue === 0) {
+            inv.Status = "Fully Paid";
+          } else if (fin.alreadyPaid > 0) {
+            inv.Status = "Part Paid";
+          } else {
+            inv.Status = "Unpaid";
+          }
+          await sendToServer("ClearingInvoices", "update", inv);
+        }
       }
 
       closeInvoicePaymentModal();
-      if (typeof showNotification === 'function') showNotification("Payment recorded successfully with Transaction ID: " + paymentId);
+      if (typeof showNotification === 'function') showNotification("Payment transaction recorded with ID: " + paymentId);
       if (currentActiveRecordId) previewClearingDetails(currentActiveRecordId);
       if (!document.getElementById("allPaymentsModal").classList.contains("hidden")) openAllPaymentsModal();
       if (!document.getElementById("allInvoicesModal").classList.contains("hidden")) openAllInvoicesModal();
@@ -925,15 +1248,15 @@
       const p = (db.ClearingPayments || []).find(function(x) { return String(x.ID) === String(payId); });
       if (!p) return alert("Payment record not found.");
 
-      const html = '<form onsubmit="submitEditPayment(event, \'' + p.ID + '\')" class="space-y-4">' +
-        '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Payment ID</label><input type="text" value="' + p.ID + '" disabled class="border p-2 rounded w-full text-xs bg-gray-50 font-mono"></div>' +
-        '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Beneficiary Name</label><input type="text" id="edit_pay_ben" value="' + (p.BeneficiaryName || '') + '" required class="border p-2 rounded w-full text-xs outline-none"></div>' +
+      const html = '<form onsubmit="submitEditPayment(event, \'' + esc(p.ID) + '\')" class="space-y-4">' +
+        '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Payment Transaction ID</label><input type="text" value="' + esc(p.ID) + '" disabled class="border p-2 rounded w-full text-xs bg-gray-50 font-mono"></div>' +
+        '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Beneficiary Name</label><input type="text" id="edit_pay_ben" value="' + esc(p.BeneficiaryName || '') + '" required class="border p-2 rounded w-full text-xs outline-none"></div>' +
         '<div class="grid grid-cols-2 gap-3">' +
-          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Payment Date</label><input type="date" id="edit_pay_date" value="' + (p.Date || '') + '" required class="border p-2 rounded w-full text-xs outline-none bg-white"></div>' +
-          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Amount Paid ($)</label><input type="number" step="0.01" id="edit_pay_amount" value="' + (p.AmountPaid || 0) + '" required class="border p-2 rounded w-full text-xs font-bold text-emerald-600 outline-none"></div>' +
+          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Payment Date</label><input type="date" id="edit_pay_date" value="' + esc(p.Date || '') + '" required class="border p-2 rounded w-full text-xs outline-none bg-white"></div>' +
+          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Total Amount Paid ($)</label><input type="number" step="0.01" id="edit_pay_amount" value="' + (p.AmountPaid || 0) + '" required class="border p-2 rounded w-full text-xs font-bold text-emerald-600 outline-none"></div>' +
         '</div>' +
-        '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Covered Invoices</label><input type="text" id="edit_pay_invs" value="' + (p.InvoicesPaid || '') + '" required class="border p-2 rounded w-full text-xs outline-none"></div>' +
-        '<button type="submit" class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition text-xs shadow">Update Payment Record</button>' +
+        '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Covered Invoices Summary</label><input type="text" id="edit_pay_invs" value="' + esc(p.InvoicesPaid || '') + '" required class="border p-2 rounded w-full text-xs outline-none"></div>' +
+        '<button type="submit" class="w-full bg-blue-600 text-white py-2.5 rounded-lg font-semibold hover:bg-blue-700 transition text-xs shadow">Update Payment Transaction</button>' +
       '</form>';
 
       document.getElementById("invoicePaymentBody").innerHTML = html;
@@ -952,13 +1275,12 @@
 
         await sendToServer("ClearingPayments", "update", p);
         closeInvoicePaymentModal();
-        if (typeof showNotification === 'function') showNotification("Payment record updated!");
+        if (typeof showNotification === 'function') showNotification("Payment transaction updated!");
         if (currentActiveRecordId) previewClearingDetails(currentActiveRecordId);
         if (!document.getElementById("allPaymentsModal").classList.contains("hidden")) openAllPaymentsModal();
       }
     }
 
-    // --- EXTRA CHARGES FORM BUILDER ---
     function addExtraChargeRow(type, description, amount) {
       type = type || "Storage";
       description = description || "";
@@ -986,9 +1308,9 @@
       container.innerHTML = invoiceExtraChargesList.map(function(charge, idx) {
         return '<div class="grid grid-cols-1 md:grid-cols-12 gap-2 bg-white p-2 rounded border items-center text-xs extra-charge-row">' +
           '<div class="md:col-span-3"><select class="border p-1.5 rounded w-full outline-none bg-gray-50 ec-type">' +
-            chargeTypes.map(function(t) { return '<option value="' + t + '" ' + (charge.type === t ? 'selected' : '') + '>' + t + '</option>'; }).join('') +
+            chargeTypes.map(function(t) { return '<option value="' + esc(t) + '" ' + (charge.type === t ? 'selected' : '') + '>' + esc(t) + '</option>'; }).join('') +
           '</select></div>' +
-          '<div class="md:col-span-5"><input type="text" value="' + (charge.description || '') + '" placeholder="Charge Description / Notes..." class="border p-1.5 rounded w-full outline-none bg-gray-50 ec-desc"></div>' +
+          '<div class="md:col-span-5"><input type="text" value="' + esc(charge.description || '') + '" placeholder="Charge Description / Notes..." class="border p-1.5 rounded w-full outline-none bg-gray-50 ec-desc"></div>' +
           '<div class="md:col-span-3"><input type="number" step="0.01" value="' + (charge.amount || 0) + '" placeholder="Amount ($)" class="border p-1.5 rounded w-full outline-none bg-gray-50 font-semibold text-red-600 ec-amt"></div>' +
           '<div class="md:col-span-1 text-right"><button type="button" onclick="removeExtraChargeRow(' + idx + ')" class="bg-red-100 hover:bg-red-200 text-red-700 px-2 py-1 rounded font-bold text-xs">✕</button></div>' +
         '</div>';
@@ -1012,11 +1334,11 @@
       }
 
       const html = '<form onsubmit="submitInvoiceForm(event)" class="space-y-3 max-h-[75vh] overflow-y-auto px-1">' +
-          '<input type="hidden" id="inv_edit_id" value="' + (itemToEdit ? itemToEdit.ID : '') + '">' +
+          '<input type="hidden" id="inv_edit_id" value="' + (itemToEdit ? esc(itemToEdit.ID) : '') + '">' +
           '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Select Container / Clearing File</label>' +
             '<select id="inv_clearingId" onchange="onContainerInvoiceSelected(this.value)" class="border p-2 rounded w-full text-sm outline-none bg-white">' +
               '<option value="">-- Choose Container --</option>' +
-              clearingList.map(function(c) { return '<option value="' + c.ID + '" ' + ((itemToEdit && itemToEdit.ClearingID === c.ID) || (prefillClearingId === c.ID) ? 'selected' : '') + '>' + c.ContainerNo + ' (Client:' + c.Client + ')</option>'; }).join('') +
+              clearingList.map(function(c) { return '<option value="' + esc(c.ID) + '" ' + ((itemToEdit && itemToEdit.ClearingID === c.ID) || (prefillClearingId === c.ID) ? 'selected' : '') + '>' + esc(c.ContainerNo) + ' (Client:' + esc(c.Client) + ')</option>'; }).join('') +
             '</select>' +
           '</div>' +
           '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Invoice Type</label>' +
@@ -1025,7 +1347,7 @@
               '<option value="Transport" ' + (itemToEdit && itemToEdit.Type === 'Transport' ? 'selected' : '') + '>Transport Invoice (Transporter)</option>' +
             '</select>' +
           '</div>' +
-          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Beneficiary Name</label><input type="text" id="inv_beneficiary" value="' + (itemToEdit ? itemToEdit.BeneficiaryName || '' : '') + '" class="border p-2 rounded w-full text-sm font-semibold text-gray-700 outline-none"></div>' +
+          '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Beneficiary Name</label><input type="text" id="inv_beneficiary" value="' + (itemToEdit ? esc(itemToEdit.BeneficiaryName || '') : '') + '" class="border p-2 rounded w-full text-sm font-semibold text-gray-700 outline-none"></div>' +
           '<div><label class="text-xs text-gray-500 block mb-1 font-semibold">Base Amount ($)</label><input type="number" step="0.01" id="inv_amount" value="' + (itemToEdit ? itemToEdit.Amount || 0 : '') + '" required class="border p-2 rounded w-full text-sm outline-none"></div>' +
           '<div class="bg-amber-50/70 border border-amber-200 p-3 rounded-lg space-y-2">' +
             '<div class="flex justify-between items-center">' +
@@ -1039,14 +1361,15 @@
               '<option value="Unpaid" ' + (itemToEdit && itemToEdit.Status === 'Unpaid' ? 'selected' : '') + '>Unpaid</option>' +
               '<option value="Part Paid" ' + (itemToEdit && itemToEdit.Status === 'Part Paid' ? 'selected' : '') + '>Part Paid</option>' +
               '<option value="Fully Paid" ' + (itemToEdit && itemToEdit.Status === 'Fully Paid' ? 'selected' : '') + '>Fully Paid</option>' +
+              '<option value="Overpaid" ' + (itemToEdit && itemToEdit.Status === 'Overpaid' ? 'selected' : '') + '>Overpaid</option>' +
             '</select>' +
           '</div>' +
           '<button type="submit" class="w-full bg-emerald-600 text-white py-2 rounded-lg font-semibold hover:bg-emerald-700 transition">' + (itemToEdit ? 'Update Invoice & Charges' : 'Save Invoice & Charges') + '</button>' +
         '</form>';
 
-      if (typeof openFormModal === 'function') {
-        openFormModal(itemToEdit ? "Edit Invoice: " + itemToEdit.ID : "Record Agent / Transporter Invoice", html);
-      }
+      document.getElementById("formModalTitle").innerText = itemToEdit ? "Edit Invoice: " + esc(itemToEdit.ID) : "Record Agent / Transporter Invoice";
+      document.getElementById("formModalBody").innerHTML = html;
+      document.getElementById("formModal").classList.remove("hidden");
       renderExtraChargesList();
       if (prefillClearingId && !itemToEdit) onContainerInvoiceSelected(prefillClearingId);
     }
@@ -1126,14 +1449,6 @@
         }
       });
 
-      let existingPaymentRecords = [];
-      if (editId) {
-        const oldInv = (db.ClearingInvoices || []).find(function(x) { return String(x.ID) === String(editId); });
-        if (oldInv && Array.isArray(oldInv.PaymentRecords)) {
-          existingPaymentRecords = oldInv.PaymentRecords;
-        }
-      }
-
       const invoiceData = {
         ID: invoiceId,
         ClearingID: clearingItem ? clearingItem.ID : '',
@@ -1141,8 +1456,7 @@
         Type: invoiceType,
         BeneficiaryName: document.getElementById("inv_beneficiary").value,
         Amount: parseFloat(document.getElementById("inv_amount").value) || 0,
-        Status: document.getElementById("inv_status").value,
-        PaymentRecords: existingPaymentRecords
+        Status: document.getElementById("inv_status").value
       };
 
       if (!globalData.ClearingInvoices) globalData.ClearingInvoices = [];
@@ -1172,18 +1486,19 @@
         await sendToServer("ClearingExtraCharges", "add", newChargeRecord);
       }
 
-      if (typeof closeFormModal === 'function') closeFormModal();
+      closeFormModal();
       if (typeof showNotification === 'function') showNotification("Invoice and Extra Charges saved successfully!");
       if (currentActiveRecordId) previewClearingDetails(currentActiveRecordId);
       if (!document.getElementById("allInvoicesModal").classList.contains("hidden")) openAllInvoicesModal();
     }
 
     async function deletePaymentRecord(payId) {
-      if (!confirm("Are you sure you want to delete payment record " + payId + "?")) return;
+      if (!confirm("Are you sure you want to delete payment transaction " + payId + "?")) return;
       await sendToServer("ClearingPayments", "delete", { ID: payId });
-      if (typeof showNotification === 'function') showNotification("Payment record deleted.");
+      if (typeof showNotification === 'function') showNotification("Payment transaction deleted.");
       if (currentActiveRecordId) previewClearingDetails(currentActiveRecordId);
       if (!document.getElementById("allPaymentsModal").classList.contains("hidden")) openAllPaymentsModal();
+      if (!document.getElementById("allInvoicesModal").classList.contains("hidden")) openAllInvoicesModal();
     }
 
     function downloadPaymentReceiptPDF(payId) {
@@ -1200,7 +1515,7 @@
 
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
-      doc.text("Receipt ID: " + p.ID, 20, 35);
+      doc.text("Transaction ID: " + p.ID, 20, 35);
       doc.text("Date: " + (p.Date || 'N/A'), 20, 42);
       doc.text("Beneficiary: " + p.BeneficiaryName, 20, 49);
 
@@ -1208,12 +1523,12 @@
       doc.line(20, 56, 190, 56);
 
       doc.setFont("helvetica", "bold");
-      doc.text("Covered Invoices:", 20, 68);
+      doc.text("Allocated Invoices & Exact Amounts Paid:", 20, 68);
       doc.setFont("helvetica", "normal");
       doc.text("" + (p.InvoicesPaid || 'N/A'), 20, 75);
 
       doc.setFont("helvetica", "bold");
-      doc.text("Total Amount Paid: $" + parseFloat(p.AmountPaid || 0).toFixed(2), 20, 95);
+      doc.text("Total Transaction Amount: $" + parseFloat(p.AmountPaid || 0).toFixed(2), 20, 95);
 
       doc.setFontSize(9);
       doc.setTextColor(100);
@@ -1222,9 +1537,49 @@
       doc.save("Payment_Receipt_" + p.ID + ".pdf");
     }
 
-    // --- ALL INVOICES MODAL & FILTER / EXPORT LOGIC ---
+    // --- MULTI-STATUS FILTERABLE ALL INVOICES MODAL ---
+    function toggleStatusFilterBadge(statusKey) {
+      if (statusKey === 'all') {
+        selectedInvoiceStatuses = [];
+      } else {
+        const idx = selectedInvoiceStatuses.indexOf(statusKey);
+        if (idx > -1) {
+          selectedInvoiceStatuses.splice(idx, 1);
+        } else {
+          selectedInvoiceStatuses.push(statusKey);
+        }
+      }
+      renderStatusFilterBadges();
+      filterAllInvoicesTable();
+    }
+
+    function renderStatusFilterBadges() {
+      const container = document.getElementById("statusFilterBadgesContainer");
+      if (!container) return;
+
+      const statuses = [
+        { key: 'unpaid', label: 'Unpaid', activeClass: 'bg-amber-600 text-white border-amber-700', inactiveClass: 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100' },
+        { key: 'part paid', label: 'Part Paid', activeClass: 'bg-blue-600 text-white border-blue-700', inactiveClass: 'bg-blue-50 text-blue-800 border-blue-300 hover:bg-blue-100' },
+        { key: 'fully paid', label: 'Fully Paid', activeClass: 'bg-emerald-600 text-white border-emerald-700', inactiveClass: 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100' },
+        { key: 'overpaid', label: 'Overpaid', activeClass: 'bg-red-600 text-white border-red-700', inactiveClass: 'bg-red-50 text-red-800 border-red-300 hover:bg-red-100' }
+      ];
+
+      const isAllActive = selectedInvoiceStatuses.length === 0;
+      let html = '<button type="button" onclick="toggleStatusFilterBadge(\'all\')" class="px-2.5 py-1 rounded-md text-xs font-semibold border transition shadow-sm ' + (isAllActive ? 'bg-gray-800 text-white border-gray-900' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100') + '">All Statuses</button>';
+
+      statuses.forEach(function(s) {
+        const isSelected = selectedInvoiceStatuses.includes(s.key);
+        html += '<button type="button" onclick="toggleStatusFilterBadge(\'' + s.key + '\')" class="px-2.5 py-1 rounded-md text-xs font-semibold border transition shadow-sm flex items-center gap-1 ' + (isSelected ? s.activeClass : s.inactiveClass) + '">' +
+            '<span>' + (isSelected ? '✓ ' : '') + s.label + '</span>' +
+          '</button>';
+      });
+
+      container.innerHTML = html;
+    }
+
     function openAllInvoicesModal() {
       closeAllModals();
+      selectedInvoiceStatuses = [];
       const db = globalData || {};
       const invoices = db.ClearingInvoices || [];
       const allExtraCharges = db.ClearingExtraCharges || [];
@@ -1247,30 +1602,35 @@
         let statusBadge = 'bg-amber-100 text-amber-800';
         if (statusLabel === 'Fully Paid') statusBadge = 'bg-emerald-100 text-emerald-800';
         else if (statusLabel === 'Part Paid') statusBadge = 'bg-blue-100 text-blue-800';
+        else if (statusLabel === 'Overpaid') statusBadge = 'bg-red-100 text-red-800 font-bold';
 
         const extraChargesSummary = fin.invCharges.map(function(ec) {
-          return '• ' + (ec.Type || 'Extra') + ': $' + parseFloat(ec.Amount || 0).toFixed(2) + ' (' + (ec.Description || 'No desc') + ')';
+          return '• ' + esc(ec.Type || 'Extra') + ': $' + parseFloat(ec.Amount || 0).toFixed(2) + ' (' + esc(ec.Description || 'No desc') + ')';
         }).join('<br>');
 
-        let paymentRecordsSummary = fin.paymentRecords.map(function(pr) {
-          return '<span class="inline-block bg-gray-100 border px-1.5 py-0.5 rounded text-[10px] font-mono mr-1 mb-1">Tx: ' + pr.paymentId + ' ($' + parseFloat(pr.amount).toFixed(2) + ')</span>';
+        let paymentRecordsSummary = fin.txList.map(function(tx) {
+          return '<span onclick="openPaymentTransactionDetails(\'' + esc(tx.paymentId) + '\')" class="inline-block bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded text-[10px] font-mono mr-1 mb-1 cursor-pointer hover:bg-blue-100" title="Click to view transaction details"><b>Tx: ' + esc(tx.paymentId) + '</b>: $' + parseFloat(tx.amount).toFixed(2) + '</span>';
         }).join('') || '<span class="text-gray-400 italic">No payments recorded yet</span>';
 
+        if (fin.overpaidAmount > 0) {
+          paymentRecordsSummary += '<span class="block text-red-600 font-bold text-[10px] mt-1">⚠️ Overpaid: +$' + fin.overpaidAmount.toFixed(2) + ' (Available Credit)</span>';
+        }
+
         return '<tr class="hover:bg-gray-50 border-b text-xs" data-status="' + statusLabel.toLowerCase() + '" data-type="' + (inv.Type || '').toLowerCase() + '" data-total="' + grandTotal + '" data-paid="' + alreadyPaid + '" data-balance="' + remainingDue + '">' +
-          '<td class="p-2.5"><input type="checkbox" class="inv-checkbox" value="' + inv.ID + '" data-amount="' + grandTotal + '"></td>' +
-          '<td class="p-2.5 font-mono">' + inv.ID + '</td>' +
-          '<td class="p-2.5 font-semibold text-gray-800">' + inv.ContainerNo + '</td>' +
-          '<td class="p-2.5">' + inv.Type + '</td>' +
-          '<td class="p-2.5">' + inv.BeneficiaryName + '</td>' +
+          '<td class="p-2.5"><input type="checkbox" class="inv-checkbox" value="' + esc(inv.ID) + '" data-amount="' + grandTotal + '"></td>' +
+          '<td class="p-2.5 font-mono font-bold"><button onclick="openInvoicePaymentHistory(\'' + esc(inv.ID) + '\')" class="text-blue-700 hover:underline font-bold text-xs cursor-pointer">📦 ' + esc(inv.ID) + '</button></td>' +
+          '<td class="p-2.5 font-semibold text-gray-800">' + esc(inv.ContainerNo) + '</td>' +
+          '<td class="p-2.5">' + esc(inv.Type) + '</td>' +
+          '<td class="p-2.5">' + esc(inv.BeneficiaryName) + '</td>' +
           '<td class="p-2.5 font-semibold text-blue-600">$' + grandTotal.toFixed(2) + '</td>' +
           '<td class="p-2.5 font-semibold text-emerald-600">$' + alreadyPaid.toFixed(2) + '</td>' +
           '<td class="p-2.5 font-semibold text-amber-600">$' + remainingDue.toFixed(2) + '</td>' +
           '<td class="p-2.5 text-[10px] text-gray-600">' + paymentRecordsSummary + (extraChargesSummary ? '<br>' + extraChargesSummary : '') + '</td>' +
-          '<td class="p-2.5"><span class="px-2 py-0.5 rounded text-[10px] font-bold ' + statusBadge + '">' + statusLabel + '</span></td>' +
+          '<td class="p-2.5"><span class="px-2 py-0.5 rounded text-[10px] font-bold ' + statusBadge + '">' + (statusLabel === 'Overpaid' ? 'Overpaid (+$' + fin.overpaidAmount.toFixed(2) + ')' : statusLabel) + '</span></td>' +
           '<td class="p-2.5 text-right space-x-1 whitespace-nowrap">' +
-            '<button onclick="openPaymentModal(\'' + inv.ID + '\')" class="bg-blue-100 text-blue-800 hover:bg-blue-200 px-2 py-0.5 rounded text-[10px] font-bold">💳 Pay</button>' +
-            '<button onclick="editInvoiceRecord(\'' + inv.ID + '\')" class="bg-amber-100 text-amber-800 hover:bg-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">✏️ Edit</button>' +
-            '<button onclick="deleteInvoiceRecord(\'' + inv.ID + '\')" class="bg-red-100 text-red-800 hover:bg-red-200 px-2 py-0.5 rounded text-[10px] font-bold">🗑️ Delete</button>' +
+            '<button onclick="openPaymentModal(\'' + esc(inv.ID) + '\')" class="bg-blue-100 text-blue-800 hover:bg-blue-200 px-2 py-0.5 rounded text-[10px] font-bold">💳 Pay</button>' +
+            '<button onclick="editInvoiceRecord(\'' + esc(inv.ID) + '\')" class="bg-amber-100 text-amber-800 hover:bg-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">✏️ Edit</button>' +
+            '<button onclick="deleteInvoiceRecord(\'' + esc(inv.ID) + '\')" class="bg-red-100 text-red-800 hover:bg-red-200 px-2 py-0.5 rounded text-[10px] font-bold">🗑️ Delete</button>' +
           '</td>' +
         '</tr>';
       }).join('');
@@ -1283,13 +1643,8 @@
           '</div>' +
           '<div class="flex flex-col md:flex-row justify-between items-center gap-2 bg-gray-50 p-3 rounded-lg border">' +
             '<div class="flex flex-wrap items-center gap-2 flex-1 w-full">' +
-              '<input type="text" id="allInvSearchInput" placeholder="🔍 Search invoices..." oninput="filterAllInvoicesTable()" class="border bg-white px-3 py-1.5 rounded text-xs outline-none w-full md:w-56">' +
-              '<select id="allInvStatusFilter" onchange="filterAllInvoicesTable()" class="border bg-white px-2.5 py-1.5 rounded text-xs outline-none">' +
-                '<option value="">All Statuses</option>' +
-                '<option value="fully paid">Fully Paid</option>' +
-                '<option value="part paid">Part Paid</option>' +
-                '<option value="unpaid">Unpaid</option>' +
-              '</select>' +
+              '<input type="text" id="allInvSearchInput" placeholder="🔍 Search invoices..." oninput="filterAllInvoicesTable()" class="border bg-white px-3 py-1.5 rounded text-xs outline-none w-full md:w-48">' +
+              '<div id="statusFilterBadgesContainer" class="flex flex-wrap items-center gap-1.5"></div>' +
               '<select id="allInvTypeFilter" onchange="filterAllInvoicesTable()" class="border bg-white px-2.5 py-1.5 rounded text-xs outline-none">' +
                 '<option value="">All Types</option>' +
                 '<option value="clearing">Clearing</option>' +
@@ -1307,18 +1662,19 @@
             '<table class="w-full text-left text-xs" id="tbl_all_invoices">' +
               '<thead><tr class="bg-gray-100 text-gray-500">' +
                 '<th class="p-2.5"><input type="checkbox" onclick="toggleAllInvoices(this, \'tbl_all_invoices\')"></th>' +
-                '<th class="p-2.5">ID</th><th class="p-2.5">Container</th><th class="p-2.5">Type</th><th class="p-2.5">Beneficiary</th><th class="p-2.5">Total ($)</th><th class="p-2.5">Paid ($)</th><th class="p-2.5">Balance ($)</th><th class="p-2.5">Payments & Extra</th><th class="p-2.5">Status</th><th class="p-2.5 text-right">Actions</th>' +
+                '<th class="p-2.5">ID</th><th class="p-2.5">Container</th><th class="p-2.5">Type</th><th class="p-2.5">Beneficiary</th><th class="p-2.5">Total ($)</th><th class="p-2.5">Paid ($)</th><th class="p-2.5">Balance ($)</th><th class="p-2.5">Payments & Exact Paid</th><th class="p-2.5">Status</th><th class="p-2.5 text-right">Actions</th>' +
               '</tr></thead>' +
               '<tbody class="divide-y" id="tbl_all_invoices_body">' + (rows || '<tr><td colspan="11" class="p-4 text-center text-gray-400">No invoices recorded.</td></tr>') + '</tbody>' +
             '</table>' +
           '</div>' +
         '</div>';
+      
+      renderStatusFilterBadges();
       document.getElementById("allInvoicesModal").classList.remove("hidden");
     }
 
     function filterAllInvoicesTable() {
       const query = (document.getElementById("allInvSearchInput")?.value || "").toLowerCase().trim();
-      const statusFilter = (document.getElementById("allInvStatusFilter")?.value || "").toLowerCase();
       const typeFilter = (document.getElementById("allInvTypeFilter")?.value || "").toLowerCase();
 
       const tbody = document.getElementById("tbl_all_invoices_body");
@@ -1342,7 +1698,7 @@
         const rowBalance = parseFloat(row.getAttribute("data-balance")) || 0;
 
         const matchesSearch = !query || text.includes(query);
-        const matchesStatus = !statusFilter || rowStatus.includes(statusFilter);
+        const matchesStatus = selectedInvoiceStatuses.length === 0 || selectedInvoiceStatuses.some(function(st) { return rowStatus.includes(st); });
         const matchesType = !typeFilter || rowType === typeFilter;
 
         if (matchesSearch && matchesStatus && matchesType) {
@@ -1375,6 +1731,7 @@
       }
     }
 
+    // --- ENHANCED PDF EXPORT WITH TABLE AND TOTALS ---
     function exportAllInvoicesPDF() {
       const { jsPDF } = window.jspdf;
       const doc = new jsPDF('landscape');
@@ -1383,30 +1740,50 @@
       doc.setFontSize(16);
       doc.text("FleetDesk - Agent & Transporter Invoices Report", 14, 15);
 
-      doc.setFontSize(10);
+      doc.setFontSize(9);
       doc.setFont("helvetica", "normal");
-      doc.text("Generated on: " + new Date().toLocaleString(), 14, 22);
+      doc.text("Generated on: " + new Date().toLocaleString(), 14, 21);
 
       let rowsData = [];
+      let sumTotal = 0;
+      let sumPaid = 0;
+      let sumBalance = 0;
+
       document.querySelectorAll("#tbl_all_invoices_body tr").forEach(function(row) {
         if (row.style.display !== "none" && row.id !== "noAllInvResultsRow") {
           const cols = row.querySelectorAll("td");
           if (cols.length >= 10) {
+            const tVal = parseFloat(row.getAttribute("data-total")) || 0;
+            const pVal = parseFloat(row.getAttribute("data-paid")) || 0;
+            const bVal = parseFloat(row.getAttribute("data-balance")) || 0;
+
+            sumTotal += tVal;
+            sumPaid += pVal;
+            sumBalance += bVal;
+
             rowsData.push([
-              cols[1].innerText, // ID
-              cols[2].innerText, // Container
-              cols[3].innerText, // Type
-              cols[4].innerText, // Beneficiary
-              cols[5].innerText, // Total
-              cols[6].innerText, // Paid
-              cols[7].innerText, // Balance
-              cols[9].innerText  // Status
+              cols[1].innerText.trim(),
+              cols[2].innerText.trim(),
+              cols[3].innerText.trim(),
+              cols[4].innerText.trim(),
+              "$" + tVal.toFixed(2),
+              "$" + pVal.toFixed(2),
+              "$" + bVal.toFixed(2),
+              cols[9].innerText.trim()
             ]);
           }
         }
       });
 
-      let startY = 28;
+      rowsData.push([
+        "TOTAL", "", "", "",
+        "$" + sumTotal.toFixed(2),
+        "$" + sumPaid.toFixed(2),
+        "$" + sumBalance.toFixed(2),
+        ""
+      ]);
+
+      let startY = 25;
       if (typeof doc.autoTable === 'function') {
         doc.autoTable({
           startY: startY,
@@ -1414,7 +1791,13 @@
           body: rowsData,
           theme: 'grid',
           headStyles: { fillColor: [30, 58, 138] },
-          styles: { fontSize: 9 }
+          styles: { fontSize: 8, cellPadding: 3 },
+          didParseCell: function(data) {
+            if (data.row.index === rowsData.length - 1) {
+              data.cell.styles.fontStyle = 'bold';
+              data.cell.styles.fillColor = [243, 244, 246];
+            }
+          }
         });
       } else {
         let y = startY + 10;
@@ -1427,27 +1810,42 @@
       doc.save("Invoices_Report.pdf");
     }
 
+    // --- ENHANCED CSV / EXCEL EXPORT WITH TABLE AND TOTALS ---
     function exportAllInvoicesCSV() {
       let csvContent = "data:text/csv;charset=utf-8,Invoice ID,Container,Type,Beneficiary,Total ($),Paid ($),Balance ($),Status\n";
       
+      let sumTotal = 0;
+      let sumPaid = 0;
+      let sumBalance = 0;
+
       document.querySelectorAll("#tbl_all_invoices_body tr").forEach(function(row) {
         if (row.style.display !== "none" && row.id !== "noAllInvResultsRow") {
           const cols = row.querySelectorAll("td");
           if (cols.length >= 10) {
+            const tVal = parseFloat(row.getAttribute("data-total")) || 0;
+            const pVal = parseFloat(row.getAttribute("data-paid")) || 0;
+            const bVal = parseFloat(row.getAttribute("data-balance")) || 0;
+
+            sumTotal += tVal;
+            sumPaid += pVal;
+            sumBalance += bVal;
+
             const rowData = [
-              cols[1].innerText,
-              cols[2].innerText,
-              cols[3].innerText,
-              '"' + cols[4].innerText + '"',
-              cols[5].innerText.replace('$', ''),
-              cols[6].innerText.replace('$', ''),
-              cols[7].innerText.replace('$', ''),
-              cols[9].innerText
+              cols[1].innerText.trim(),
+              cols[2].innerText.trim(),
+              cols[3].innerText.trim(),
+              '"' + cols[4].innerText.trim() + '"',
+              tVal.toFixed(2),
+              pVal.toFixed(2),
+              bVal.toFixed(2),
+              '"' + cols[9].innerText.trim() + '"'
             ];
             csvContent += rowData.join(",") + "\n";
           }
         }
       });
+
+      csvContent += '"TOTAL","","","","' + sumTotal.toFixed(2) + '","' + sumPaid.toFixed(2) + '","' + sumBalance.toFixed(2) + '",""\n';
 
       const encodedUri = encodeURI(csvContent);
       const link = document.createElement("a");
@@ -1462,6 +1860,7 @@
       document.getElementById("allInvoicesModal").classList.add("hidden");
     }
 
+    // --- CLICKABLE ALL PAYMENT RECORDS MODAL ---
     function openAllPaymentsModal() {
       closeAllModals();
       const db = globalData || {};
@@ -1469,31 +1868,32 @@
       const totalPaid = payments.reduce(function(sum, p) { return sum + (parseFloat(p.AmountPaid) || 0); }, 0);
 
       let rows = payments.map(function(p) {
-        return '<tr class="hover:bg-gray-50 border-b text-xs">' +
-          '<td class="p-2 font-mono">' + p.ID + '</td>' +
-          '<td class="p-2">' + (p.Date || 'N/A') + '</td>' +
-          '<td class="p-2 font-semibold">' + p.BeneficiaryName + '</td>' +
-          '<td class="p-2 font-semibold text-emerald-600">$' + parseFloat(p.AmountPaid || 0).toFixed(2) + '</td>' +
-          '<td class="p-2">' + (p.InvoicesPaid || 'N/A') + '</td>' +
-          '<td class="p-2 text-right space-x-1">' +
-            '<button onclick="downloadPaymentReceiptPDF(\'' + p.ID + '\')" class="bg-blue-100 text-blue-800 hover:bg-blue-200 px-2 py-0.5 rounded text-[10px] font-bold">📥 Download</button>' +
-            '<button onclick="editPaymentRecord(\'' + p.ID + '\')" class="bg-amber-100 text-amber-800 hover:bg-amber-200 px-2 py-0.5 rounded text-[10px] font-bold">✏️ Edit</button>' +
-            '<button onclick="deletePaymentRecord(\'' + p.ID + '\')" class="bg-red-100 text-red-800 hover:bg-red-200 px-2 py-0.5 rounded text-[10px] font-bold">🗑️ Delete</button>' +
+        return '<tr class="hover:bg-gray-50 border-b text-xs cursor-pointer" onclick="openPaymentTransactionDetails(\'' + esc(p.ID) + '\')">' +
+          '<td class="p-2.5 font-mono font-bold text-indigo-700">' + esc(p.ID) + '</td>' +
+          '<td class="p-2.5">' + esc(p.Date || 'N/A') + '</td>' +
+          '<td class="p-2.5 font-semibold">' + esc(p.BeneficiaryName) + '</td>' +
+          '<td class="p-2.5 font-semibold text-emerald-600">$' + parseFloat(p.AmountPaid || 0).toFixed(2) + '</td>' +
+          '<td class="p-2.5 font-mono text-gray-600">' + esc(p.InvoicesPaid || 'N/A') + '</td>' +
+          '<td class="p-2.5 text-right space-x-1" onclick="event.stopPropagation()">' +
+            '<button onclick="openPaymentTransactionDetails(\'' + esc(p.ID) + '\')" class="bg-blue-100 text-blue-800 hover:bg-blue-200 px-2 py-0.5 rounded text-[10px] font-bold">🔍 View Invoices</button>' +
+            '<button onclick="downloadPaymentReceiptPDF(\'' + esc(p.ID) + '\')" class="bg-indigo-100 text-indigo-800 hover:bg-indigo-200 px-2 py-0.5 rounded text-[10px] font-bold">📥 Download</button>' +
+            '<button onclick="deletePaymentRecord(\'' + esc(p.ID) + '\')" class="bg-red-100 text-red-800 hover:bg-red-200 px-2 py-0.5 rounded text-[10px] font-bold">🗑️ Delete</button>' +
           '</td>' +
         '</tr>';
       }).join('');
 
       document.getElementById("allPaymentsModalBody").innerHTML = '<div class="space-y-3">' +
           '<div class="flex flex-col md:flex-row justify-between items-center gap-3">' +
-            '<div class="bg-emerald-50 border border-emerald-200 p-3 rounded-lg flex-1 flex justify-between items-center"><span class="text-xs text-emerald-600 font-semibold">Total Payments Made Across All Files</span><span class="text-lg font-bold text-emerald-900">$' + totalPaid.toFixed(2) + '</span></div>' +
+            '<div class="bg-emerald-50 border border-emerald-200 p-3 rounded-lg flex-1 flex justify-between items-center"><span class="text-xs text-emerald-600 font-semibold">Total Payments Made Across All Transactions</span><span class="text-lg font-bold text-emerald-900">$' + totalPaid.toFixed(2) + '</span></div>' +
             '<input type="text" placeholder="🔍 Search all payments..." oninput="filterTable(event, \'tbl_all_payments\')" class="border px-3 py-2 rounded text-xs outline-none w-full md:w-64">' +
           '</div>' +
+          '<p class="text-[11px] text-gray-500 italic">💡 Click on any transaction row to view exact invoices and amounts paid under that single transaction.</p>' +
           '<div class="bg-white rounded-lg border overflow-hidden max-h-[60vh] overflow-y-auto">' +
             '<table class="w-full text-left text-xs" id="tbl_all_payments">' +
               '<thead><tr class="bg-gray-100 text-gray-500">' +
-                '<th class="p-2.5">Pay ID</th><th class="p-2.5">Date</th><th class="p-2.5">Beneficiary</th><th class="p-2.5">Paid ($)</th><th class="p-2.5">Covered Invoices</th><th class="p-2.5 text-right">Actions</th>' +
+                '<th class="p-2.5">Transaction ID</th><th class="p-2.5">Date</th><th class="p-2.5">Beneficiary</th><th class="p-2.5">Total Paid ($)</th><th class="p-2.5">Invoices & Exact Paid</th><th class="p-2.5 text-right">Actions</th>' +
               '</tr></thead>' +
-              '<tbody class="divide-y">' + (rows || '<tr><td colspan="6" class="p-4 text-center text-gray-400">No payments recorded.</td></tr>') + '</tbody>' +
+              '<tbody class="divide-y">' + (rows || '<tr><td colspan="6" class="p-4 text-center text-gray-400">No payment records.</td></tr>') + '</tbody>' +
             '</table>' +
           '</div>' +
         '</div>';
@@ -1504,7 +1904,6 @@
       document.getElementById("allPaymentsModal").classList.add("hidden");
     }
 
-    // --- PREVIEW DETAILS MODAL ---
     function previewClearingDetails(id) {
       closeAllModals();
       currentActiveRecordId = id;
@@ -1520,7 +1919,7 @@
       allExtraCharges.forEach(function(ec) {
         const amt = parseFloat(ec.Amount) || 0;
         totalExtraCharges += amt;
-        extraChargesBreakdownList.push('<li><b>' + (ec.Type || 'Extra') + ':</b> $' + amt.toFixed(2) + ' - <i>' + (ec.Description || 'No description') + '</i> (Inv: ' + ec.InvoiceID + ')</li>');
+        extraChargesBreakdownList.push('<li><b>' + esc(ec.Type || 'Extra') + ':</b> $' + amt.toFixed(2) + ' - <i>' + esc(ec.Description || 'No description') + '</i> (Inv: <button onclick="openInvoicePaymentHistory(\'' + esc(ec.InvoiceID) + '\')" class="text-blue-700 font-bold hover:underline">' + esc(ec.InvoiceID) + '</button></li>');
       });
 
       const total = (parseFloat(item.ClearingAmount) || 0) + 
@@ -1537,10 +1936,10 @@
           '<div class="space-y-1">' +
             attachments.map(function(att) {
               return '<div class="flex justify-between items-center bg-white p-1.5 rounded border text-xs">' +
-                '<span class="truncate max-w-[180px] font-medium">' + att.name + '</span>' +
+                '<span class="truncate max-w-[180px] font-medium">' + esc(att.name) + '</span>' +
                 '<div class="flex items-center gap-2">' +
-                  '<button onclick="previewSingleFile(\'' + att.name + '\', \'' + att.data + '\', \'' + (att.type || '') + '\')" class="bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded text-[11px]">Preview</button>' +
-                  '<a href="' + att.data + '" download="' + att.name + '" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-0.5 rounded text-[11px]">Download</a>' +
+                  '<button onclick="previewSingleFile(\'' + esc(att.name) + '\', \'' + att.data + '\', \'' + (att.type || '') + '\')" class="bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded text-[11px]">Preview</button>' +
+                  '<a href="' + att.data + '" download="' + esc(att.name) + '" class="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-0.5 rounded text-[11px]">Download</a>' +
                 '</div>' +
               '</div>';
             }).join('') +
@@ -1552,12 +1951,12 @@
       const demurrageNotesList = Array.isArray(item.DemurrageNotesList) ? item.DemurrageNotesList : (item.DemurrageNotes ? [item.DemurrageNotes] : []);
 
       const modalHtml = '<div id="printableClearingContent" class="space-y-3 text-sm text-gray-700 bg-white p-1">' +
-          '<div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Container No:</span><span class="font-bold text-gray-900">📦 ' + item.ContainerNo + '</span></div>' +
-          '<div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">BL No / Size:</span><span class="font-semibold">' + item.BLno + ' (' + item.Size + ')</span></div>' +
-          '<div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Consignee / Client:</span><span class="font-semibold">' + item.Consignee + ' / ' + item.Client + '</span></div>' +
-          '<div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Port & Destination:</span><span class="font-semibold">' + item.Port + ' ➔ ' + item.Destination + '</span></div>' +
-          '<div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Transporter / Truck:</span><span class="font-semibold text-indigo-600">' + (item.Transporter || 'N/A') + ' (' + (item.Truck || 'N/A') + ')</span></div>' +
-          '<div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Shipping Line(s):</span><span class="font-semibold">' + (item.ShippingLines || 'N/A') + '</span></div>' +
+          '<div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Container No:</span><span class="font-bold text-gray-900">📦 ' + esc(item.ContainerNo) + '</span></div>' +
+          '<div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">BL No / Size:</span><span class="font-semibold">' + esc(item.BLno) + ' (' + esc(item.Size) + ')</span></div>' +
+          '<div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Consignee / Client:</span><span class="font-semibold">' + esc(item.Consignee) + ' / ' + esc(item.Client) + '</span></div>' +
+          '<div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Port & Destination:</span><span class="font-semibold">' + esc(item.Port) + ' ➔ ' + esc(item.Destination) + '</span></div>' +
+          '<div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Transporter / Truck:</span><span class="font-semibold text-indigo-600">' + esc(item.Transporter || 'N/A') + ' (' + esc(item.Truck || 'N/A') + ')</span></div>' +
+          '<div class="flex justify-between border-b pb-1"><span class="font-medium text-gray-500">Shipping Line(s):</span><span class="font-semibold">' + esc(item.ShippingLines || 'N/A') + '</span></div>' +
           attachmentSection +
           '<div class="bg-slate-50 p-3 rounded-lg border space-y-1">' +
             '<p class="font-bold text-xs uppercase text-slate-700">💰 Financial Breakdown</p>' +
@@ -1572,15 +1971,15 @@
           (extraChargesBreakdownList.length > 0 ? '<div class="bg-amber-50/60 p-3 rounded-lg border border-amber-200 space-y-1 text-xs"><span class="font-bold text-amber-900 block uppercase">⚠️ Invoice Extra Charges Breakdown</span><ul class="list-disc pl-4 space-y-1 text-amber-900">' + extraChargesBreakdownList.join('') + '</ul></div>' : '') +
           '<div class="bg-gray-50 p-3 rounded-lg border space-y-2">' +
             '<p class="font-bold text-xs uppercase text-gray-700">📝 Charge Logs & Notes</p>' +
-            '<div><span class="font-semibold text-xs text-gray-600">Storage Logs:</span> <ul class="list-disc pl-4 text-xs text-gray-800 bg-white p-1.5 rounded border mt-0.5">' + (storageNotesList.map(function(n) { return '<li>' + n + '</li>'; }).join('') || '<li>No notes.</li>') + '</ul></div>' +
-            '<div><span class="font-semibold text-xs text-gray-600">Warehouse Rent Logs:</span> <ul class="list-disc pl-4 text-xs text-gray-800 bg-white p-1.5 rounded border mt-0.5">' + (rentNotesList.map(function(n) { return '<li>' + n + '</li>'; }).join('') || '<li>No notes.</li>') + '</ul></div>' +
-            '<div><span class="font-semibold text-xs text-gray-600">Demurrage / Detention Logs:</span> <ul class="list-disc pl-4 text-xs text-gray-800 bg-white p-1.5 rounded border mt-0.5">' + (demurrageNotesList.map(function(n) { return '<li>' + n + '</li>'; }).join('') || '<li>No notes.</li>') + '</ul></div>' +
+            '<div><span class="font-semibold text-xs text-gray-600">Storage Logs:</span> <ul class="list-disc pl-4 text-xs text-gray-800 bg-white p-1.5 rounded border mt-0.5">' + (storageNotesList.map(function(n) { return '<li>' + esc(n) + '</li>'; }).join('') || '<li>No notes.</li>') + '</ul></div>' +
+            '<div><span class="font-semibold text-xs text-gray-600">Warehouse Rent Logs:</span> <ul class="list-disc pl-4 text-xs text-gray-800 bg-white p-1.5 rounded border mt-0.5">' + (rentNotesList.map(function(n) { return '<li>' + esc(n) + '</li>'; }).join('') || '<li>No notes.</li>') + '</ul></div>' +
+            '<div><span class="font-semibold text-xs text-gray-600">Demurrage / Detention Logs:</span> <ul class="list-disc pl-4 text-xs text-gray-800 bg-white p-1.5 rounded border mt-0.5">' + (demurrageNotesList.map(function(n) { return '<li>' + esc(n) + '</li>'; }).join('') || '<li>No notes.</li>') + '</ul></div>' +
           '</div>' +
           renderInvoicesManagementSection(item.ID) +
         '</div>';
 
       document.getElementById("modalTitle").innerHTML = '<div class="flex justify-between items-center w-full">' +
-          '<span>Clearing File: ' + item.ContainerNo + '</span>' +
+          '<span>Clearing File: ' + esc(item.ContainerNo) + '</span>' +
           '<button onclick="printClearingModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-semibold shadow transition flex items-center gap-1">🖨️ Print / Download PDF</button>' +
         '</div>';
       document.getElementById("modalBody").innerHTML = modalHtml;
