@@ -50,28 +50,108 @@
   <script>
     document.getElementById("sidebarContainer").innerHTML = renderSidebar("Garage");
 
-    // Track column order state
     let garageColumnOrder = ["ID", "Date", "Item", "Description", "Qty", "Currency", "Price", "Total (USD)", "Shop Ref", "Vehicle", "Trip", "Actions"];
+    let isInitialRender = true;
 
     window.onDataLoaded = function(db) {
-      renderGaragePage(db || window.globalData || {});
+      const data = db || window.globalData || {};
+      
+      // Build static layout shell once, then update data dynamically
+      if (isInitialRender || !document.getElementById("filter_item")) {
+        buildPageShell(data);
+        isInitialRender = false;
+      }
+      
+      updateTableContent(data);
     };
 
-    function renderGaragePage(db) {
+    function buildPageShell(db) {
+      const combinations = db.Combinations || [];
+      const trucks = db.Trucks || [];
+      const trailers = db.Trailers || [];
+      const trips = db.Trips || [];
+
+      // Build Vehicle filter options
+      let truckFilterOptions = '<option value="">All Vehicles</option>';
+      combinations.forEach(c => {
+        const t = trucks.find(tr => String(tr.ID) === String(c.TruckID) || String(tr.PlateNumber) === String(c.TruckID));
+        const tr = trailers.find(trl => String(trl.ID) === String(c.TrailerID) || String(trl.PlateNumber) === String(c.TrailerID));
+        const tPlate = t ? (t.PlateNumber || t.Registration || t.ID) : c.TruckID;
+        const trPlate = tr ? (tr.PlateNumber || tr.Registration || tr.ID) : 'No Trailer';
+        truckFilterOptions += `<option value="${c.ID}">${tPlate}/${trPlate}</option>`;
+      });
+
+      // Build Trip filter options
+      let tripFilterOptions = '<option value="">All Trips</option>';
+      trips.forEach(tr => {
+        tripFilterOptions += `<option value="${tr.ID}">Trip [${tr.TripNumber}]</option>`;
+      });
+
+      document.getElementById("pageContent").innerHTML = `
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-2">
+          <button onclick="openGarageFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
+            ➕ Add Garage Record
+          </button>
+          <div class="text-xs text-gray-500 italic">💡 Drag column headers left/right to reposition. Drag right borders to resize widths as narrow/wide as you want.</div>
+        </div>
+
+        <!-- Advanced Filter Section (Fixed Above Table) -->
+        <div class="bg-white p-4 rounded-xl shadow-sm border grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+          <div>
+            <label class="text-xs font-semibold text-gray-600 block mb-1">From Date</label>
+            <input type="date" id="filter_dateFrom" onchange="updateTableContent(globalData)" class="border p-2 rounded text-xs w-full outline-none">
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-gray-600 block mb-1">To Date</label>
+            <input type="date" id="filter_dateTo" onchange="updateTableContent(globalData)" class="border p-2 rounded text-xs w-full outline-none">
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-gray-600 block mb-1">Spare Part / Item</label>
+            <input type="text" id="filter_item" placeholder="Search item or details..." oninput="updateTableContent(globalData)" class="border p-2 rounded text-xs w-full outline-none">
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-gray-600 block mb-1">Vehicle Combination</label>
+            <select id="filter_truck" onchange="updateTableContent(globalData)" class="border p-2 rounded text-xs w-full outline-none bg-white">${truckFilterOptions}</select>
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-gray-600 block mb-1">Trip</label>
+            <select id="filter_trip" onchange="updateTableContent(globalData)" class="border p-2 rounded text-xs w-full outline-none bg-white">${tripFilterOptions}</select>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div class="p-4 border-b flex justify-between items-center">
+            <span id="recordCountLabel" class="text-xs font-bold text-gray-600">Loading records...</span>
+            <div class="flex items-center gap-2">
+              <button onclick="exportPDFTable('Garage', window.filteredGarageList || globalData.Garage)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 PDF</button>
+              <button onclick="exportCSVData('Garage', window.filteredGarageList || globalData.Garage)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 CSV</button>
+            </div>
+          </div>
+          <div class="overflow-x-auto min-h-[300px]">
+            <table class="w-full text-left border-collapse text-sm whitespace-nowrap" id="table_Garage">
+              <thead id="tableHeaderContainer"></thead>
+              <tbody id="tableBodyContainer" class="divide-y"></tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function updateTableContent(db) {
       const garageList = db.Garage || [];
       const combinations = db.Combinations || [];
       const trucks = db.Trucks || [];
       const trailers = db.Trailers || [];
       const trips = db.Trips || [];
 
-      // Read filter values safely
+      // Capture active filter values without losing focus
       const filterFrom = document.getElementById("filter_dateFrom")?.value || "";
       const filterTo = document.getElementById("filter_dateTo")?.value || "";
       const filterItem = document.getElementById("filter_item")?.value.toLowerCase() || "";
       const filterTruck = document.getElementById("filter_truck")?.value || "";
       const filterTrip = document.getElementById("filter_trip")?.value || "";
 
-      // Multi-filter evaluation
+      // Filter logic
       const filteredList = garageList.filter(g => {
         if (filterFrom && g.Date < filterFrom) return false;
         if (filterTo && g.Date > filterTo) return false;
@@ -80,6 +160,8 @@
         if (filterTrip && String(g.TripID) !== String(filterTrip)) return false;
         return true;
       });
+
+      window.filteredGarageList = filteredList;
 
       let tableRows = "";
       filteredList.forEach(g => {
@@ -100,7 +182,6 @@
         const trip = trips.find(tr => String(tr.ID) === String(g.TripID));
         const displayTrip = trip ? `Trip [${trip.TripNumber}]` : 'None';
 
-        // Generate cells dynamically based on column order
         let cells = "";
         garageColumnOrder.forEach(col => {
           if (col === "ID") cells += `<td class="p-3 text-xs text-gray-500">${g.ID || ''}</td>`;
@@ -137,24 +218,6 @@
         tableRows += `<tr class="hover:bg-gray-50 border-b">${cells}</tr>`;
       });
 
-      // Build Vehicle filter options
-      let truckFilterOptions = '<option value="">All Vehicles</option>';
-      combinations.forEach(c => {
-        const t = trucks.find(tr => String(tr.ID) === String(c.TruckID) || String(tr.PlateNumber) === String(c.TruckID));
-        const tr = trailers.find(trl => String(trl.ID) === String(c.TrailerID) || String(trl.PlateNumber) === String(c.TrailerID));
-        const tPlate = t ? (t.PlateNumber || t.Registration || t.ID) : c.TruckID;
-        const trPlate = tr ? (tr.PlateNumber || tr.Registration || tr.ID) : 'No Trailer';
-        const selected = filterTruck === String(c.ID) ? 'selected' : '';
-        truckFilterOptions += `<option value="${c.ID}" ${selected}>${tPlate}/${trPlate}</option>`;
-      });
-
-      // Build Trip filter options
-      let tripFilterOptions = '<option value="">All Trips</option>';
-      trips.forEach(tr => {
-        const selected = filterTrip === String(tr.ID) ? 'selected' : '';
-        tripFilterOptions += `<option value="${tr.ID}" ${selected}>Trip [${tr.TripNumber}]</option>`;
-      });
-
       // Build Header items with draggable attributes
       let headerCells = "";
       garageColumnOrder.forEach((col, index) => {
@@ -166,61 +229,9 @@
         `;
       });
 
-      // Inject complete HTML layout into pageContent
-      document.getElementById("pageContent").innerHTML = `
-        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-2">
-          <button onclick="openGarageFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
-            ➕ Add Garage Record
-          </button>
-          <div class="text-xs text-gray-500 italic">💡 Drag column headers left/right to reposition. Drag right borders to resize widths.</div>
-        </div>
-
-        <!-- Advanced Filter Section -->
-        <div class="bg-white p-4 rounded-xl shadow-sm border grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
-          <div>
-            <label class="text-xs font-semibold text-gray-600 block mb-1">From Date</label>
-            <input type="date" id="filter_dateFrom" value="${filterFrom}" onchange="renderGaragePage(globalData)" class="border p-2 rounded text-xs w-full outline-none">
-          </div>
-          <div>
-            <label class="text-xs font-semibold text-gray-600 block mb-1">To Date</label>
-            <input type="date" id="filter_dateTo" value="${filterTo}" onchange="renderGaragePage(globalData)" class="border p-2 rounded text-xs w-full outline-none">
-          </div>
-          <div>
-            <label class="text-xs font-semibold text-gray-600 block mb-1">Spare Part / Item</label>
-            <input type="text" id="filter_item" value="${filterItem}" placeholder="Search item or details..." oninput="renderGaragePage(globalData)" class="border p-2 rounded text-xs w-full outline-none">
-          </div>
-          <div>
-            <label class="text-xs font-semibold text-gray-600 block mb-1">Vehicle Combination</label>
-            <select id="filter_truck" onchange="renderGaragePage(globalData)" class="border p-2 rounded text-xs w-full outline-none bg-white">${truckFilterOptions}</select>
-          </div>
-          <div>
-            <label class="text-xs font-semibold text-gray-600 block mb-1">Trip</label>
-            <select id="filter_trip" onchange="renderGaragePage(globalData)" class="border p-2 rounded text-xs w-full outline-none bg-white">${tripFilterOptions}</select>
-          </div>
-        </div>
-
-        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
-          <div class="p-4 border-b flex justify-between items-center">
-            <span class="text-xs font-bold text-gray-600">Showing ${filteredList.length} of ${garageList.length} records</span>
-            <div class="flex items-center gap-2">
-              <button onclick="exportPDFTable('Garage', filteredList)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 PDF</button>
-              <button onclick="exportCSVData('Garage', filteredList)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 CSV</button>
-            </div>
-          </div>
-          <div class="overflow-x-auto min-h-[300px]">
-            <table class="w-full text-left border-collapse text-sm whitespace-nowrap" id="table_Garage">
-              <thead>
-                <tr class="bg-gray-50 text-gray-500 text-xs">
-                  ${headerCells}
-                </tr>
-              </thead>
-              <tbody class="divide-y">
-                ${tableRows || '<tr><td colspan="12" class="p-4 text-center text-gray-400">No matching garage records found.</td></tr>'}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      `;
+      document.getElementById("tableHeaderContainer").innerHTML = `<tr class="bg-gray-50 text-gray-500 text-xs">${headerCells}</tr>`;
+      document.getElementById("tableBodyContainer").innerHTML = tableRows || '<tr><td colspan="12" class="p-4 text-center text-gray-400">No matching garage records found.</td></tr>';
+      document.getElementById("recordCountLabel").innerText = `Showing ${filteredList.length} of ${garageList.length} records`;
 
       makeTableResizable(document.getElementById('table_Garage'));
     }
@@ -252,11 +263,9 @@
 
       const targetIndex = parseInt(targetTh.getAttribute('data-index'));
       if (draggedIndex !== null && draggedIndex !== targetIndex) {
-        // Reorder array elements
         const movedCol = garageColumnOrder.splice(draggedIndex, 1)[0];
         garageColumnOrder.splice(targetIndex, 0, movedCol);
-        // Re-render table with new order
-        renderGaragePage(globalData);
+        updateTableContent(globalData);
       }
     }
 
@@ -281,7 +290,7 @@
           
           function mouseMoveHandler(e) {
             const dx = e.clientX - x;
-            const newWidth = Math.max(15, w + dx); // Shrink tightly down to 15px if desired
+            const newWidth = Math.max(15, w + dx); // Unrestricted width adjustment down to 15px
             th.style.width = `${newWidth}px`;
           }
 
@@ -426,11 +435,10 @@
       await sendToServer("Garage", editId ? "update" : "add", data);
     }
 
-    // Trigger initial load
     if (typeof fetchDatabase === "function") {
       fetchDatabase();
     } else if (window.globalData) {
-      renderGaragePage(window.globalData);
+      window.onDataLoaded(window.globalData);
     }
   </script>
 </body>
