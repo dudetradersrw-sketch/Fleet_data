@@ -7,6 +7,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="app.js"></script>
   <style>
+    /* Column resizer handle styling */
     .resizer {
       position: absolute;
       right: 0;
@@ -16,9 +17,10 @@
       cursor: col-resize;
       user-select: none;
       touch-action: none;
+      z-index: 5;
     }
     .resizer:hover, .resizing {
-      background-color: rgba(59, 130, 246, 0.7);
+      background-color: rgba(59, 130, 246, 0.8);
     }
     th {
       position: relative;
@@ -37,28 +39,30 @@
     </header>
     <div class="p-6 space-y-6" id="pageContent">Loading...</div>
   </main>
-  
+
   <script>
+    // Render static layout
     document.getElementById("sidebarContainer").innerHTML = renderSidebar("Garage");
 
-    // Main entry point when app.js finishes loading data
+    // Master render function bound to window so app.js can call it
     window.onDataLoaded = function(db) {
-      const garageList = db.Garage || [];
-      const combinations = db.Combinations || [];
-      const trucks = db.Trucks || [];
-      const trailers = db.Trailers || [];
-      const trips = db.Trips || [];
+      const data = db || window.globalData || {};
+      const garageList = data.Garage || [];
+      const combinations = data.Combinations || [];
+      const trucks = data.Trucks || [];
+      const trailers = data.Trailers || [];
+      const trips = data.Trips || [];
 
-      // Capture filter values (if elements exist on DOM)
-      const filterFrom = document.getElementById("filter_dateFrom")?.value || "";
-      const filterTo = document.getElementById("filter_dateTo")?.value || "";
-      const filterItem = document.getElementById("filter_item")?.value.toLowerCase() || "";
-      const filterTruck = document.getElementById("filter_truck")?.value || "";
-      const filterTrip = document.getElementById("filter_trip")?.value || "";
+      // Read filter values if elements exist
+      const filterFrom = document.getElementById("filter_dateFrom") ? document.getElementById("filter_dateFrom").value : "";
+      const filterTo = document.getElementById("filter_dateTo") ? document.getElementById("filter_dateTo").value : "";
+      const filterItem = document.getElementById("filter_item") ? document.getElementById("filter_item").value.toLowerCase() : "";
+      const filterTruck = document.getElementById("filter_truck") ? document.getElementById("filter_truck").value : "";
+      const filterTrip = document.getElementById("filter_trip") ? document.getElementById("filter_trip").value : "";
 
       const columns = ["ID", "Date", "Item", "Description", "Qty", "Currency", "Price", "Total (USD)", "Shop Ref", "Vehicle", "Trip", "Actions"];
 
-      // Filter logic supporting single or multi-filter combinations
+      // Multi-filter evaluation
       const filteredList = garageList.filter(g => {
         if (filterFrom && g.Date < filterFrom) return false;
         if (filterTo && g.Date > filterTo) return false;
@@ -118,7 +122,7 @@
         `;
       });
 
-      // Build Vehicle filter options
+      // Build Vehicle filter dropdown items
       let truckFilterOptions = '<option value="">All Vehicles</option>';
       combinations.forEach(c => {
         const t = trucks.find(tr => String(tr.ID) === String(c.TruckID) || String(tr.PlateNumber) === String(c.TruckID));
@@ -129,22 +133,23 @@
         truckFilterOptions += `<option value="${c.ID}" ${selected}>${tPlate}/${trPlate}</option>`;
       });
 
-      // Build Trip filter options
+      // Build Trip filter dropdown items
       let tripFilterOptions = '<option value="">All Trips</option>';
       trips.forEach(tr => {
         const selected = filterTrip === String(tr.ID) ? 'selected' : '';
         tripFilterOptions += `<option value="${tr.ID}" ${selected}>Trip [${tr.TripNumber}]</option>`;
       });
 
+      // Render Filters + Table into pageContent
       document.getElementById("pageContent").innerHTML = `
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-2">
           <button onclick="openGarageFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
             ➕ Add Garage Record
           </button>
-          <div class="text-xs text-gray-500 italic">💡 Drag column borders freely to resize as narrow or wide as needed.</div>
+          <div class="text-xs text-gray-500 italic">💡 Drag column edge borders left/right to adjust widths as narrow or wide as needed.</div>
         </div>
 
-        <!-- Advanced Filter Section -->
+        <!-- Multi-Filter Bar -->
         <div class="bg-white p-4 rounded-xl shadow-sm border grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
           <div>
             <label class="text-xs font-semibold text-gray-600 block mb-1">From Date</label>
@@ -156,7 +161,7 @@
           </div>
           <div>
             <label class="text-xs font-semibold text-gray-600 block mb-1">Spare Part / Item</label>
-            <input type="text" id="filter_item" value="${filterItem}" placeholder="Search item..." oninput="window.onDataLoaded(globalData)" class="border p-2 rounded text-xs w-full outline-none">
+            <input type="text" id="filter_item" value="${filterItem}" placeholder="Search item or details..." oninput="window.onDataLoaded(globalData)" class="border p-2 rounded text-xs w-full outline-none">
           </div>
           <div>
             <label class="text-xs font-semibold text-gray-600 block mb-1">Vehicle Combination</label>
@@ -172,9 +177,8 @@
           <div class="p-4 border-b flex justify-between items-center">
             <span class="text-xs font-bold text-gray-600">Showing ${filteredList.length} of ${garageList.length} records</span>
             <div class="flex items-center gap-2">
-              ${typeof renderColumnVisibilityMenu === 'function' ? renderColumnVisibilityMenu('table_Garage', columns) : ''}
-              <button onclick="exportPDFTable('Garage', filteredList)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 PDF</button>
-              <button onclick="exportCSVData('Garage', filteredList)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 CSV</button>
+              <button onclick="exportPDFTable('Garage', globalData.Garage)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 PDF</button>
+              <button onclick="exportCSVData('Garage', globalData.Garage)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 CSV</button>
             </div>
           </div>
           <div class="overflow-x-auto min-h-[300px]">
@@ -203,10 +207,11 @@
         </div>
       `;
 
+      // Attach resize logic to newly created headers
       makeTableResizable(document.getElementById('table_Garage'));
     };
 
-    // Unrestricted column resizing down to text content limit
+    // Unrestricted drag-to-resize mechanism
     function makeTableResizable(table) {
       if (!table) return;
       const headers = table.querySelectorAll('th');
@@ -227,7 +232,8 @@
           
           function mouseMoveHandler(e) {
             const dx = e.clientX - x;
-            const newWidth = Math.max(20, w + dx); // Unrestricted shrinking down to 20px
+            // Unrestricted: shrink down close to zero/text boundary (15px limit)
+            const newWidth = Math.max(15, w + dx);
             th.style.width = `${newWidth}px`;
           }
 
@@ -372,7 +378,12 @@
       await sendToServer("Garage", editId ? "update" : "add", data);
     }
 
-    fetchDatabase();
+    // Auto-executes fetchDatabase() on fresh load or fallback to local memory
+    if (typeof fetchDatabase === "function") {
+      fetchDatabase();
+    } else if (window.globalData) {
+      window.onDataLoaded(window.globalData);
+    }
   </script>
 </body>
 </html>
