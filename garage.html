@@ -19,10 +19,13 @@
       touch-action: none;
     }
     .resizer:hover, .resizing {
-      background-color: rgba(59, 130, 246, 0.5);
+      background-color: rgba(59, 130, 246, 0.7);
     }
     th {
       position: relative;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
   </style>
 </head>
@@ -40,16 +43,38 @@
     document.getElementById("sidebarContainer").innerHTML = renderSidebar("Garage");
 
     window.onDataLoaded = function(db) {
+      renderGaragePage();
+    };
+
+    function renderGaragePage() {
+      const db = globalData || {};
       const garageList = db.Garage || [];
       const combinations = db.Combinations || [];
       const trucks = db.Trucks || [];
       const trailers = db.Trailers || [];
       const trips = db.Trips || [];
 
+      // Get filter values if active
+      const filterFrom = document.getElementById("filter_dateFrom")?.value || "";
+      const filterTo = document.getElementById("filter_dateTo")?.value || "";
+      const filterItem = document.getElementById("filter_item")?.value.toLowerCase() || "";
+      const filterTruck = document.getElementById("filter_truck")?.value || "";
+      const filterTrip = document.getElementById("filter_trip")?.value || "";
+
       const columns = ["ID", "Date", "Item", "Description", "Qty", "Currency", "Price", "Total (USD)", "Shop Ref", "Vehicle", "Trip", "Actions"];
 
+      // Filter logic
+      const filteredList = garageList.filter(g => {
+        if (filterFrom && g.Date < filterFrom) return false;
+        if (filterTo && g.Date > filterTo) return false;
+        if (filterItem && !(g.Item && g.Item.toLowerCase().includes(filterItem) || g.Description && g.Description.toLowerCase().includes(filterItem))) return false;
+        if (filterTruck && String(g.TruckID) !== String(filterTruck)) return false;
+        if (filterTrip && String(g.TripID) !== String(filterTrip)) return false;
+        return true;
+      });
+
       let tableRows = "";
-      garageList.forEach(g => {
+      filteredList.forEach(g => {
         const combination = combinations.find(c => String(c.ID) === String(g.TruckID) || String(c.TruckID) === String(g.TruckID));
         let displayVehicle = g.TruckID || 'N/A';
 
@@ -98,57 +123,98 @@
         `;
       });
 
+      // Build truck/combination filter options
+      let truckFilterOptions = '<option value="">All Vehicles</option>';
+      combinations.forEach(c => {
+        const t = trucks.find(tr => String(tr.ID) === String(c.TruckID) || String(tr.PlateNumber) === String(c.TruckID));
+        const tr = trailers.find(trl => String(trl.ID) === String(c.TrailerID) || String(trl.PlateNumber) === String(c.TrailerID));
+        const tPlate = t ? (t.PlateNumber || t.Registration || t.ID) : c.TruckID;
+        const trPlate = tr ? (tr.PlateNumber || tr.Registration || tr.ID) : 'No Trailer';
+        const selected = filterTruck === String(c.ID) ? 'selected' : '';
+        truckFilterOptions += `<option value="${c.ID}" ${selected}>${tPlate}/${trPlate}</option>`;
+      });
+
+      // Build trip filter options
+      let tripFilterOptions = '<option value="">All Trips</option>';
+      trips.forEach(tr => {
+        const selected = filterTrip === String(tr.ID) ? 'selected' : '';
+        tripFilterOptions += `<option value="${tr.ID}" ${selected}>Trip [${tr.TripNumber}]</option>`;
+      });
+
       document.getElementById("pageContent").innerHTML = `
-        <div class="mb-2 flex justify-between items-center">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-2">
           <button onclick="openGarageFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
             ➕ Add Garage Record
           </button>
-          <div class="text-xs text-gray-500 italic">💡 Tip: Drag column edges to resize horizontally, or use the column selector to show/hide.</div>
+          <div class="text-xs text-gray-500 italic">💡 Drag column right/left borders freely to resize as narrow or wide as needed.</div>
         </div>
+
+        <!-- Advanced Filters Panel -->
+        <div class="bg-white p-4 rounded-xl shadow-sm border grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+          <div>
+            <label class="text-xs font-semibold text-gray-600 block mb-1">From Date</label>
+            <input type="date" id="filter_dateFrom" value="${filterFrom}" onchange="renderGaragePage()" class="border p-2 rounded text-xs w-full outline-none">
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-gray-600 block mb-1">To Date</label>
+            <input type="date" id="filter_dateTo" value="${filterTo}" onchange="renderGaragePage()" class="border p-2 rounded text-xs w-full outline-none">
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-gray-600 block mb-1">Spare Part / Item</label>
+            <input type="text" id="filter_item" value="${filterItem}" placeholder="Search item..." oninput="renderGaragePage()" class="border p-2 rounded text-xs w-full outline-none">
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-gray-600 block mb-1">Vehicle Combination</label>
+            <select id="filter_truck" onchange="renderGaragePage()" class="border p-2 rounded text-xs w-full outline-none bg-white">${truckFilterOptions}</select>
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-gray-600 block mb-1">Trip</label>
+            <select id="filter_trip" onchange="renderGaragePage()" class="border p-2 rounded text-xs w-full outline-none bg-white">${tripFilterOptions}</select>
+          </div>
+        </div>
+
         <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
-          <div class="p-4 border-b flex flex-col md:flex-row justify-between items-center gap-3">
-            <input type="text" placeholder="🔍 Search garage records..." oninput="filterTable(event, 'table_Garage')" class="border px-3 py-1.5 rounded text-sm w-full md:w-72 outline-none">
+          <div class="p-4 border-b flex justify-between items-center">
+            <span class="text-xs font-bold text-gray-600">Showing ${filteredList.length} of ${garageList.length} records</span>
             <div class="flex items-center gap-2">
               ${renderColumnVisibilityMenu('table_Garage', columns)}
-              <button onclick="exportPDFTable('Garage', globalData.Garage)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 PDF</button>
-              <button onclick="exportCSVData('Garage', globalData.Garage)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 CSV</button>
+              <button onclick="exportPDFTable('Garage', filteredList)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 PDF</button>
+              <button onclick="exportCSVData('Garage', filteredList)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 CSV</button>
             </div>
           </div>
           <div class="overflow-x-auto min-h-[300px]">
             <table class="w-full text-left border-collapse text-sm whitespace-nowrap" id="table_Garage">
               <thead>
                 <tr class="bg-gray-50 text-gray-500 text-xs">
-                  <th class="p-3">ID</th>
-                  <th class="p-3">Date</th>
-                  <th class="p-3">Item</th>
-                  <th class="p-3">Description</th>
-                  <th class="p-3">Qty</th>
-                  <th class="p-3">Currency</th>
-                  <th class="p-3">Price</th>
-                  <th class="p-3">Total (USD)</th>
-                  <th class="p-3">Shop Ref</th>
-                  <th class="p-3">Vehicle</th>
-                  <th class="p-3">Trip</th>
-                  <th class="p-3 text-center">Actions</th>
+                  <th class="p-3" style="width: 80px;">ID</th>
+                  <th class="p-3" style="width: 100px;">Date</th>
+                  <th class="p-3" style="width: 140px;">Item</th>
+                  <th class="p-3" style="width: 180px;">Description</th>
+                  <th class="p-3" style="width: 60px;">Qty</th>
+                  <th class="p-3" style="width: 80px;">Currency</th>
+                  <th class="p-3" style="width: 90px;">Price</th>
+                  <th class="p-3" style="width: 100px;">Total (USD)</th>
+                  <th class="p-3" style="width: 110px;">Shop Ref</th>
+                  <th class="p-3" style="width: 140px;">Vehicle</th>
+                  <th class="p-3" style="width: 110px;">Trip</th>
+                  <th class="p-3 text-center" style="width: 90px;">Actions</th>
                 </tr>
               </thead>
               <tbody class="divide-y">
-                ${tableRows || '<tr><td colspan="12" class="p-4 text-center text-gray-400">No garage records found.</td></tr>'}
+                ${tableRows || '<tr><td colspan="12" class="p-4 text-center text-gray-400">No matching garage records found.</td></tr>'}
               </tbody>
             </table>
           </div>
         </div>
       `;
 
-      // Initialize resizable columns behavior
       makeTableResizable(document.getElementById('table_Garage'));
-    };
+    }
 
     function makeTableResizable(table) {
       if (!table) return;
       const headers = table.querySelectorAll('th');
       headers.forEach(th => {
-        // Prevent duplicate resizers if re-rendered
         if (th.querySelector('.resizer')) return;
 
         const resizer = document.createElement('div');
@@ -165,7 +231,8 @@
           
           function mouseMoveHandler(e) {
             const dx = e.clientX - x;
-            th.style.width = `${w + dx}px`;
+            const newWidth = Math.max(30, w + dx); // Allows shrinking down tightly to 30px
+            th.style.width = `${newWidth}px`;
           }
 
           function mouseUpHandler() {
