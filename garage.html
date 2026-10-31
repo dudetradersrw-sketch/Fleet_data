@@ -7,7 +7,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="app.js"></script>
   <style>
-    /* Column resizer handle styling */
     .resizer {
       position: absolute;
       right: 0;
@@ -27,6 +26,14 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      cursor: grab;
+    }
+    th:active {
+      cursor: grabbing;
+    }
+    th.dragging {
+      opacity: 0.4;
+      background: #e2e8f0;
     }
   </style>
 </head>
@@ -41,26 +48,28 @@
   </main>
 
   <script>
-    // Render static layout
     document.getElementById("sidebarContainer").innerHTML = renderSidebar("Garage");
 
-    // Master render function bound to window so app.js can call it
+    // Track column order state
+    let garageColumnOrder = ["ID", "Date", "Item", "Description", "Qty", "Currency", "Price", "Total (USD)", "Shop Ref", "Vehicle", "Trip", "Actions"];
+
     window.onDataLoaded = function(db) {
-      const data = db || window.globalData || {};
-      const garageList = data.Garage || [];
-      const combinations = data.Combinations || [];
-      const trucks = data.Trucks || [];
-      const trailers = data.Trailers || [];
-      const trips = data.Trips || [];
+      renderGaragePage(db || window.globalData || {});
+    };
 
-      // Read filter values if elements exist
-      const filterFrom = document.getElementById("filter_dateFrom") ? document.getElementById("filter_dateFrom").value : "";
-      const filterTo = document.getElementById("filter_dateTo") ? document.getElementById("filter_dateTo").value : "";
-      const filterItem = document.getElementById("filter_item") ? document.getElementById("filter_item").value.toLowerCase() : "";
-      const filterTruck = document.getElementById("filter_truck") ? document.getElementById("filter_truck").value : "";
-      const filterTrip = document.getElementById("filter_trip") ? document.getElementById("filter_trip").value : "";
+    function renderGaragePage(db) {
+      const garageList = db.Garage || [];
+      const combinations = db.Combinations || [];
+      const trucks = db.Trucks || [];
+      const trailers = db.Trailers || [];
+      const trips = db.Trips || [];
 
-      const columns = ["ID", "Date", "Item", "Description", "Qty", "Currency", "Price", "Total (USD)", "Shop Ref", "Vehicle", "Trip", "Actions"];
+      // Read filter values safely
+      const filterFrom = document.getElementById("filter_dateFrom")?.value || "";
+      const filterTo = document.getElementById("filter_dateTo")?.value || "";
+      const filterItem = document.getElementById("filter_item")?.value.toLowerCase() || "";
+      const filterTruck = document.getElementById("filter_truck")?.value || "";
+      const filterTrip = document.getElementById("filter_trip")?.value || "";
 
       // Multi-filter evaluation
       const filteredList = garageList.filter(g => {
@@ -91,38 +100,44 @@
         const trip = trips.find(tr => String(tr.ID) === String(g.TripID));
         const displayTrip = trip ? `Trip [${trip.TripNumber}]` : 'None';
 
-        tableRows += `
-          <tr class="hover:bg-gray-50 border-b">
-            <td class="p-3 text-xs text-gray-500">${g.ID || ''}</td>
-            <td class="p-3 text-xs">${g.Date || ''}</td>
-            <td class="p-3 font-semibold text-gray-800">${g.Item || ''}</td>
-            <td class="p-3 text-gray-600 text-xs">${g.Description || ''}</td>
-            <td class="p-3">${g.Qty || ''}</td>
-            <td class="p-3">${g.Currency || 'USD'}</td>
-            <td class="p-3">${g.Price || ''}</td>
-            <td class="p-3 font-semibold text-blue-600">$${g.TotalUSD || g.PriceUSD || 0}</td>
-            <td class="p-3 text-gray-600 text-xs">${g.ShopRef || ''}</td>
-            <td class="p-3 font-semibold text-indigo-700">🚛 ${displayVehicle}</td>
-            <td class="p-3 font-medium text-blue-600">🚀 ${displayTrip}</td>
-            <td class="p-3 text-center relative overflow-visible">
-              <div class="inline-block relative">
-                <button onclick="toggleActionDropdown('${g.ID}')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded text-xs font-semibold transition border shadow-sm">
-                  Actions ▼
-                </button>
-                <div id="actionMenu_${g.ID}" class="hidden absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-2xl z-50 py-1 text-left text-xs space-y-0.5">
-                  <button onclick="editRecord('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-amber-50 text-amber-800 font-medium">✏️ Edit</button>
-                  <button onclick="previewRecord('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-blue-50 text-blue-800 font-medium">👁️ Preview</button>
-                  <button onclick="downloadReceipt('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-indigo-50 text-indigo-800 font-medium">📄 Download</button>
-                  <button onclick="archiveRecord('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-gray-50 text-gray-800 font-medium">📦 Archive</button>
-                  <button onclick="deleteRecord('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-red-50 text-red-800 font-medium border-t">🗑️ Delete</button>
+        // Generate cells dynamically based on column order
+        let cells = "";
+        garageColumnOrder.forEach(col => {
+          if (col === "ID") cells += `<td class="p-3 text-xs text-gray-500">${g.ID || ''}</td>`;
+          else if (col === "Date") cells += `<td class="p-3 text-xs">${g.Date || ''}</td>`;
+          else if (col === "Item") cells += `<td class="p-3 font-semibold text-gray-800">${g.Item || ''}</td>`;
+          else if (col === "Description") cells += `<td class="p-3 text-gray-600 text-xs">${g.Description || ''}</td>`;
+          else if (col === "Qty") cells += `<td class="p-3">${g.Qty || ''}</td>`;
+          else if (col === "Currency") cells += `<td class="p-3">${g.Currency || 'USD'}</td>`;
+          else if (col === "Price") cells += `<td class="p-3">${g.Price || ''}</td>`;
+          else if (col === "Total (USD)") cells += `<td class="p-3 font-semibold text-blue-600">$${g.TotalUSD || g.PriceUSD || 0}</td>`;
+          else if (col === "Shop Ref") cells += `<td class="p-3 text-gray-600 text-xs">${g.ShopRef || ''}</td>`;
+          else if (col === "Vehicle") cells += `<td class="p-3 font-semibold text-indigo-700">🚛 ${displayVehicle}</td>`;
+          else if (col === "Trip") cells += `<td class="p-3 font-medium text-blue-600">🚀 ${displayTrip}</td>`;
+          else if (col === "Actions") {
+            cells += `
+              <td class="p-3 text-center relative overflow-visible">
+                <div class="inline-block relative">
+                  <button onclick="toggleActionDropdown('${g.ID}')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded text-xs font-semibold transition border shadow-sm">
+                    Actions ▼
+                  </button>
+                  <div id="actionMenu_${g.ID}" class="hidden absolute right-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-2xl z-50 py-1 text-left text-xs space-y-0.5">
+                    <button onclick="editRecord('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-amber-50 text-amber-800 font-medium">✏️ Edit</button>
+                    <button onclick="previewRecord('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-blue-50 text-blue-800 font-medium">👁️ Preview</button>
+                    <button onclick="downloadReceipt('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-indigo-50 text-indigo-800 font-medium">📄 Download</button>
+                    <button onclick="archiveRecord('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-gray-50 text-gray-800 font-medium">📦 Archive</button>
+                    <button onclick="deleteRecord('Garage', '${g.ID}')" class="w-full text-left px-3 py-2 hover:bg-red-50 text-red-800 font-medium border-t">🗑️ Delete</button>
+                  </div>
                 </div>
-              </div>
-            </td>
-          </tr>
-        `;
+              </td>
+            `;
+          }
+        });
+
+        tableRows += `<tr class="hover:bg-gray-50 border-b">${cells}</tr>`;
       });
 
-      // Build Vehicle filter dropdown items
+      // Build Vehicle filter options
       let truckFilterOptions = '<option value="">All Vehicles</option>';
       combinations.forEach(c => {
         const t = trucks.find(tr => String(tr.ID) === String(c.TruckID) || String(tr.PlateNumber) === String(c.TruckID));
@@ -133,43 +148,54 @@
         truckFilterOptions += `<option value="${c.ID}" ${selected}>${tPlate}/${trPlate}</option>`;
       });
 
-      // Build Trip filter dropdown items
+      // Build Trip filter options
       let tripFilterOptions = '<option value="">All Trips</option>';
       trips.forEach(tr => {
         const selected = filterTrip === String(tr.ID) ? 'selected' : '';
         tripFilterOptions += `<option value="${tr.ID}" ${selected}>Trip [${tr.TripNumber}]</option>`;
       });
 
-      // Render Filters + Table into pageContent
+      // Build Header items with draggable attributes
+      let headerCells = "";
+      garageColumnOrder.forEach((col, index) => {
+        const alignClass = col === "Actions" ? "text-center" : "text-left";
+        headerCells += `
+          <th class="p-3 ${alignClass}" draggable="true" data-index="${index}" ondragstart="handleDragStart(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
+            ${col}
+          </th>
+        `;
+      });
+
+      // Inject complete HTML layout into pageContent
       document.getElementById("pageContent").innerHTML = `
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-2">
           <button onclick="openGarageFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
             ➕ Add Garage Record
           </button>
-          <div class="text-xs text-gray-500 italic">💡 Drag column edge borders left/right to adjust widths as narrow or wide as needed.</div>
+          <div class="text-xs text-gray-500 italic">💡 Drag column headers left/right to reposition. Drag right borders to resize widths.</div>
         </div>
 
-        <!-- Multi-Filter Bar -->
+        <!-- Advanced Filter Section -->
         <div class="bg-white p-4 rounded-xl shadow-sm border grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
           <div>
             <label class="text-xs font-semibold text-gray-600 block mb-1">From Date</label>
-            <input type="date" id="filter_dateFrom" value="${filterFrom}" onchange="window.onDataLoaded(globalData)" class="border p-2 rounded text-xs w-full outline-none">
+            <input type="date" id="filter_dateFrom" value="${filterFrom}" onchange="renderGaragePage(globalData)" class="border p-2 rounded text-xs w-full outline-none">
           </div>
           <div>
             <label class="text-xs font-semibold text-gray-600 block mb-1">To Date</label>
-            <input type="date" id="filter_dateTo" value="${filterTo}" onchange="window.onDataLoaded(globalData)" class="border p-2 rounded text-xs w-full outline-none">
+            <input type="date" id="filter_dateTo" value="${filterTo}" onchange="renderGaragePage(globalData)" class="border p-2 rounded text-xs w-full outline-none">
           </div>
           <div>
             <label class="text-xs font-semibold text-gray-600 block mb-1">Spare Part / Item</label>
-            <input type="text" id="filter_item" value="${filterItem}" placeholder="Search item or details..." oninput="window.onDataLoaded(globalData)" class="border p-2 rounded text-xs w-full outline-none">
+            <input type="text" id="filter_item" value="${filterItem}" placeholder="Search item or details..." oninput="renderGaragePage(globalData)" class="border p-2 rounded text-xs w-full outline-none">
           </div>
           <div>
             <label class="text-xs font-semibold text-gray-600 block mb-1">Vehicle Combination</label>
-            <select id="filter_truck" onchange="window.onDataLoaded(globalData)" class="border p-2 rounded text-xs w-full outline-none bg-white">${truckFilterOptions}</select>
+            <select id="filter_truck" onchange="renderGaragePage(globalData)" class="border p-2 rounded text-xs w-full outline-none bg-white">${truckFilterOptions}</select>
           </div>
           <div>
             <label class="text-xs font-semibold text-gray-600 block mb-1">Trip</label>
-            <select id="filter_trip" onchange="window.onDataLoaded(globalData)" class="border p-2 rounded text-xs w-full outline-none bg-white">${tripFilterOptions}</select>
+            <select id="filter_trip" onchange="renderGaragePage(globalData)" class="border p-2 rounded text-xs w-full outline-none bg-white">${tripFilterOptions}</select>
           </div>
         </div>
 
@@ -177,26 +203,15 @@
           <div class="p-4 border-b flex justify-between items-center">
             <span class="text-xs font-bold text-gray-600">Showing ${filteredList.length} of ${garageList.length} records</span>
             <div class="flex items-center gap-2">
-              <button onclick="exportPDFTable('Garage', globalData.Garage)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 PDF</button>
-              <button onclick="exportCSVData('Garage', globalData.Garage)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 CSV</button>
+              <button onclick="exportPDFTable('Garage', filteredList)" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 PDF</button>
+              <button onclick="exportCSVData('Garage', filteredList)" class="bg-green-600 text-white px-3 py-1.5 rounded text-sm font-semibold">📥 CSV</button>
             </div>
           </div>
           <div class="overflow-x-auto min-h-[300px]">
             <table class="w-full text-left border-collapse text-sm whitespace-nowrap" id="table_Garage">
               <thead>
                 <tr class="bg-gray-50 text-gray-500 text-xs">
-                  <th class="p-3" style="width: 80px;">ID</th>
-                  <th class="p-3" style="width: 100px;">Date</th>
-                  <th class="p-3" style="width: 140px;">Item</th>
-                  <th class="p-3" style="width: 180px;">Description</th>
-                  <th class="p-3" style="width: 60px;">Qty</th>
-                  <th class="p-3" style="width: 80px;">Currency</th>
-                  <th class="p-3" style="width: 90px;">Price</th>
-                  <th class="p-3" style="width: 100px;">Total (USD)</th>
-                  <th class="p-3" style="width: 110px;">Shop Ref</th>
-                  <th class="p-3" style="width: 140px;">Vehicle</th>
-                  <th class="p-3" style="width: 110px;">Trip</th>
-                  <th class="p-3 text-center" style="width: 90px;">Actions</th>
+                  ${headerCells}
                 </tr>
               </thead>
               <tbody class="divide-y">
@@ -207,11 +222,45 @@
         </div>
       `;
 
-      // Attach resize logic to newly created headers
       makeTableResizable(document.getElementById('table_Garage'));
-    };
+    }
 
-    // Unrestricted drag-to-resize mechanism
+    // --- Column Drag & Drop Reordering Logic ---
+    let draggedIndex = null;
+
+    function handleDragStart(e) {
+      draggedIndex = parseInt(e.target.closest('th').getAttribute('data-index'));
+      e.target.closest('th').classList.add('dragging');
+    }
+
+    function handleDragOver(e) {
+      e.preventDefault();
+      const th = e.target.closest('th');
+      if (th) th.style.backgroundColor = '#eff6ff';
+    }
+
+    function handleDragLeave(e) {
+      const th = e.target.closest('th');
+      if (th) th.style.backgroundColor = '';
+    }
+
+    function handleDrop(e) {
+      e.preventDefault();
+      const targetTh = e.target.closest('th');
+      if (!targetTh) return;
+      targetTh.style.backgroundColor = '';
+
+      const targetIndex = parseInt(targetTh.getAttribute('data-index'));
+      if (draggedIndex !== null && draggedIndex !== targetIndex) {
+        // Reorder array elements
+        const movedCol = garageColumnOrder.splice(draggedIndex, 1)[0];
+        garageColumnOrder.splice(targetIndex, 0, movedCol);
+        // Re-render table with new order
+        renderGaragePage(globalData);
+      }
+    }
+
+    // --- Unrestricted Column Resizing Logic ---
     function makeTableResizable(table) {
       if (!table) return;
       const headers = table.querySelectorAll('th');
@@ -232,8 +281,7 @@
           
           function mouseMoveHandler(e) {
             const dx = e.clientX - x;
-            // Unrestricted: shrink down close to zero/text boundary (15px limit)
-            const newWidth = Math.max(15, w + dx);
+            const newWidth = Math.max(15, w + dx); // Shrink tightly down to 15px if desired
             th.style.width = `${newWidth}px`;
           }
 
@@ -283,7 +331,7 @@
         const trPlate = tr ? (tr.PlateNumber || tr.Registration || tr.ID) : 'No Trailer';
         const comboLabel = `${tPlate}/${trPlate}`;
         
-        const selected = item && (String(item.TruckID) === String(c.ID) || String(item.TruckID) === String(c.TruckID)) ? 'selected' : '';
+        const selected = item && (String(item.TruckID) === String(c.ID) || String(item.TruckID) === String(c.ID)) ? 'selected' : '';
         combOptions += `<option value="${c.ID}" ${selected}>${comboLabel}</option>`;
       });
 
@@ -378,11 +426,11 @@
       await sendToServer("Garage", editId ? "update" : "add", data);
     }
 
-    // Auto-executes fetchDatabase() on fresh load or fallback to local memory
+    // Trigger initial load
     if (typeof fetchDatabase === "function") {
       fetchDatabase();
     } else if (window.globalData) {
-      window.onDataLoaded(window.globalData);
+      renderGaragePage(window.globalData);
     }
   </script>
 </body>
