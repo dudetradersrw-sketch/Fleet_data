@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FleetDesk - Sign In</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="app.js"></script>
@@ -23,8 +24,8 @@
         <label class="text-xs font-semibold text-gray-600 block mb-1">Password</label>
         <input type="password" id="loginPassword" required placeholder="••••••••" class="border p-3 rounded-lg w-full text-sm outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
       </div>
-      <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-bold text-sm transition shadow-lg">
-        Sign In to FleetDesk
+      <button type="submit" id="loginSubmitBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-bold text-sm transition shadow-lg flex items-center justify-center gap-2">
+        <span>Sign In to FleetDesk</span>
       </button>
     </form>
     
@@ -34,20 +35,14 @@
   </div>
 
   <script>
-    // Try syncing in background, but do not block login if offline
-    window.addEventListener('DOMContentLoaded', () => {
-      if (typeof fetchDatabase === 'function') {
-        fetchDatabase().catch(() => console.log("Offline mode: using local user cache."));
-      }
-    });
-
-    function handleUserLogin(e) {
+    async function handleUserLogin(e) {
       e.preventDefault();
       const uInput = document.getElementById("loginUsername").value.trim();
       const pInput = document.getElementById("loginPassword").value.trim();
+      const btn = document.getElementById("loginSubmitBtn");
 
       // 1. Master Admin Fallback Check
-      if (uInput.toLowerCase() === "admin" && (pInput === "admin" || pInput === "Fleet2026@")) {
+      if (uInput.toLowerCase() === "admin" && (pInput === "admin" || pInput === "Fleet2026@" || pInput === "admin@ndikumwe.com")) {
         const adminUser = {
           Username: "admin",
           Name: "System Administrator",
@@ -55,45 +50,52 @@
           IsMasterAdmin: true,
           Permissions: ["All"]
         };
-        localStorage.setItem("fleetDesk_currentUser", JSON.stringify(adminUser));
         sessionStorage.setItem("fleetDesk_currentUser", JSON.stringify(adminUser));
-        
-        if (typeof showNotification === 'function') {
-          showNotification("Admin login successful!", "success");
-        }
-        setTimeout(() => { window.location.href = "index.html"; }, 600);
+        localStorage.clear(); // Clear old caches
+        window.location.href = "index.html";
         return;
       }
 
-      // 2. Load users from localStorage cache (ensures offline users can log in)
-      let usersList = [];
+      btn.disabled = true;
+      btn.innerHTML = `<span>Verifying with Google Sheets...</span>`;
+
+      // 2. Live JSONP backend query to Google Sheets
       try {
-        const savedDb = JSON.parse(localStorage.getItem("fleetDesk_db") || "{}");
-        usersList = savedDb.Users || [];
-      } catch (err) {
-        usersList = [];
-      }
+        const matchedUser = await new Promise((resolve) => {
+          const callbackName = 'login_callback_' + Math.round(100000 * Math.random());
+          window[callbackName] = function(res) {
+            delete window[callbackName];
+            if (script.parentNode) script.parentNode.removeChild(script);
+            if (res && res.status === "success" && res.user) {
+              resolve(res.user);
+            } else {
+              resolve(null);
+            }
+          };
 
-      // Fallback to globalData if available
-      if (usersList.length === 0 && typeof globalData !== 'undefined' && globalData.Users) {
-        usersList = globalData.Users;
-      }
+          const script = document.createElement('script');
+          script.src = `${SCRIPT_URL}?action=login&username=${encodeURIComponent(uInput)}&password=${encodeURIComponent(pInput)}&callback=${callbackName}&t=${Date.now()}`;
+          script.onerror = function() {
+            delete window[callbackName];
+            if (script.parentNode) script.parentNode.removeChild(script);
+            resolve(null);
+          };
+          document.body.appendChild(script);
+        });
 
-      // Find user matching username and password
-      const matchedUser = usersList.find(u => 
-        String(u.Username).toLowerCase() === uInput.toLowerCase() && String(u.Password) === pInput
-      );
-
-      if (matchedUser) {
-        localStorage.setItem("fleetDesk_currentUser", JSON.stringify(matchedUser));
-        sessionStorage.setItem("fleetDesk_currentUser", JSON.stringify(matchedUser));
-        
-        if (typeof showNotification === 'function') {
-          showNotification(`Welcome back, ${matchedUser.Name || matchedUser.Username}!`, "success");
+        if (matchedUser) {
+          sessionStorage.setItem("fleetDesk_currentUser", JSON.stringify(matchedUser));
+          sessionStorage.removeItem("fleetDesk_db"); // Clear stale database cache so dashboard pulls fresh live data
+          window.location.href = "index.html";
+        } else {
+          btn.disabled = false;
+          btn.innerHTML = `<span>Sign In to FleetDesk</span>`;
+          alert("Invalid username or password. Please verify your credentials.");
         }
-        setTimeout(() => { window.location.href = "index.html"; }, 800);
-      } else {
-        alert("Invalid username or password. Please check your credentials or create the user in User Management.");
+      } catch (err) {
+        btn.disabled = false;
+        btn.innerHTML = `<span>Sign In to FleetDesk</span>`;
+        alert("Connection error: Failed to reach Google Sheets backend.");
       }
     }
   </script>
