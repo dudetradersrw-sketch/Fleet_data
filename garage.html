@@ -6,6 +6,25 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="app.js"></script>
+  <style>
+    /* Resizer styling for columns */
+    .resizer {
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: 6px;
+      cursor: col-resize;
+      user-select: none;
+      touch-action: none;
+    }
+    .resizer:hover, .resizing {
+      background-color: rgba(59, 130, 246, 0.5);
+    }
+    th {
+      position: relative;
+    }
+  </style>
 </head>
 <body class="bg-gray-100 font-sans flex h-screen overflow-hidden">
   <div id="sidebarContainer"></div>
@@ -16,6 +35,7 @@
     </header>
     <div class="p-6 space-y-6" id="pageContent">Loading...</div>
   </main>
+  
   <script>
     document.getElementById("sidebarContainer").innerHTML = renderSidebar("Garage");
 
@@ -79,10 +99,11 @@
       });
 
       document.getElementById("pageContent").innerHTML = `
-        <div class="mb-2">
+        <div class="mb-2 flex justify-between items-center">
           <button onclick="openGarageFormModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow transition">
             ➕ Add Garage Record
           </button>
+          <div class="text-xs text-gray-500 italic">💡 Tip: Drag column edges to resize horizontally, or use the column selector to show/hide.</div>
         </div>
         <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
           <div class="p-4 border-b flex flex-col md:flex-row justify-between items-center gap-3">
@@ -118,7 +139,46 @@
           </div>
         </div>
       `;
+
+      // Initialize resizable columns behavior
+      makeTableResizable(document.getElementById('table_Garage'));
     };
+
+    function makeTableResizable(table) {
+      if (!table) return;
+      const headers = table.querySelectorAll('th');
+      headers.forEach(th => {
+        // Prevent duplicate resizers if re-rendered
+        if (th.querySelector('.resizer')) return;
+
+        const resizer = document.createElement('div');
+        resizer.className = 'resizer';
+        th.appendChild(resizer);
+
+        let x = 0;
+        let w = 0;
+
+        resizer.addEventListener('mousedown', function(e) {
+          x = e.clientX;
+          w = th.offsetWidth;
+          resizer.classList.add('resizing');
+          
+          function mouseMoveHandler(e) {
+            const dx = e.clientX - x;
+            th.style.width = `${w + dx}px`;
+          }
+
+          function mouseUpHandler() {
+            resizer.classList.remove('resizing');
+            document.removeEventListener('mousemove', mouseMoveHandler);
+            document.removeEventListener('mouseup', mouseUpHandler);
+          }
+
+          document.addEventListener('mousemove', mouseMoveHandler);
+          document.addEventListener('mouseup', mouseUpHandler);
+        });
+      });
+    }
 
     function toggleActionDropdown(id) {
       document.querySelectorAll("[id^='actionMenu_']").forEach(menu => {
@@ -244,7 +304,7 @@
         TotalUSD: document.getElementById("g_total").value,
         ShopRef: document.getElementById("g_shop").value,
         TruckID: document.getElementById("g_truck").value,
-        TripID: document.getElementById("g_trip").value // Added comma here
+        TripID: document.getElementById("g_trip").value
       };
       await sendToServer("Garage", editId ? "update" : "add", data);
     }
